@@ -1,0 +1,16 @@
+[tool.ruff]
+target-version = "py39"
+line-length = 88
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "SIM"]
+ignore = ["UP007", "UP037", "UP045"]
+
+[tool.mypy]
+python_version = "3.10"
+strict = true
+files = ["tv.py", "example.py", "tests"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["."]
