@@ -42,6 +42,34 @@ def test_painter_clips_writes_and_boxes() -> None:
     assert buffer.line_text(1) == "│abcd│"
 
 
+def test_screen_buffer_overwrites_wide_character_halves() -> None:
+    buffer = tv.ScreenBuffer(5, 2)
+
+    buffer.write(0, 0, "表")
+    buffer.write(1, 0, "x")
+    assert buffer.line_text(0) == " x   "
+
+    buffer.write(2, 0, "表")
+    buffer.write(2, 0, "y")
+    assert buffer.line_text(0) == " xy  "
+
+    buffer.write(0, 1, "a表")
+    buffer.fill(2, 1, 1, 1)
+    assert buffer.line_text(1) == "a    "
+
+
+def test_child_painter_clips_negative_origin_to_parent() -> None:
+    buffer = tv.ScreenBuffer(10, 1)
+    parent = tv.Painter(buffer, x=5, y=0, width=3, height=1)
+    child = parent.child(-2, 0, 4, 1)
+
+    child.write(0, 0, "abcd")
+
+    assert child.x == 5
+    assert child.width == 2
+    assert buffer.line_text(0) == "     ab   "
+
+
 def test_box_title_does_not_erase_trailing_border() -> None:
     buffer = tv.ScreenBuffer(12, 3)
     tv.Painter(buffer).box(0, 0, 12, 3, "CPU")

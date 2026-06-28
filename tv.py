@@ -218,6 +218,7 @@ class ScreenBuffer:
         x_end = min(self.width, x + width)
         y_end = min(self.height, y + height)
         for row in range(y_start, y_end):
+            self._clear_wide_overlaps(row, x_start, x_end - x_start, style)
             for col in range(x_start, x_end):
                 self._cells[row][col] = Cell(draw_char, style)
 
@@ -243,10 +244,46 @@ class ScreenBuffer:
                 continue
             if col + width > self.width:
                 break
+            self._clear_wide_overlaps(y, col, width, style)
             self._cells[y][col] = Cell(cluster, style)
             if width == 2:
                 self._cells[y][col + 1] = Cell("", style)
             col += width
+
+    def _clear_wide_overlaps(
+        self,
+        y: int,
+        x: int,
+        width: int,
+        style: str = "normal",
+    ) -> None:
+        """Clear stale wide-glyph halves touched by a pending draw.
+
+        Double-width glyphs occupy a leading cell plus an empty continuation
+        cell. Before overwriting any part of that pair, both cells must become
+        ordinary spaces so later drawing cannot leave a dangling half behind.
+        """
+        if width <= 0:
+            return
+
+        def clear_pair(left: int) -> None:
+            if 0 <= left < self.width:
+                self._cells[y][left] = Cell(" ", style)
+            if 0 <= left + 1 < self.width:
+                self._cells[y][left + 1] = Cell(" ", style)
+
+        x_start = max(0, x)
+        x_end = min(self.width, x + width)
+        if x_start >= x_end:
+            return
+        if x_start > 0 and self._cells[y][x_start].char == "":
+            clear_pair(x_start - 1)
+        for col in range(x_start, x_end):
+            cell = self._cells[y][col]
+            if cell.char == "":
+                clear_pair(col - 1)
+            elif cell_width(cell.char) == 2:
+                clear_pair(col)
 
     def line_text(self, y: int) -> str:
         """Return one rendered line without ANSI style sequences."""
@@ -311,10 +348,14 @@ class Painter:
 
     def child(self, x: int, y: int, width: int, height: int) -> "Painter":
         """Return a painter clipped to a child rectangle."""
-        child_x = self.x + x
-        child_y = self.y + y
-        child_width = min(max(0, width), max(0, self.width - x))
-        child_height = min(max(0, height), max(0, self.height - y))
+        x_start = max(0, x)
+        y_start = max(0, y)
+        x_end = min(self.width, x + width)
+        y_end = min(self.height, y + height)
+        child_x = self.x + x_start
+        child_y = self.y + y_start
+        child_width = max(0, x_end - x_start)
+        child_height = max(0, y_end - y_start)
         return Painter(self._buffer, child_x, child_y, child_width, child_height)
 
     def fill(
@@ -934,7 +975,7 @@ class DataTable(Widget):
             self.selected_index = None
             return
         index = 0 if self.selected_index is None else self.selected_index
-        self.selected_index = min(max(0, index + delta), len(self.rows) - 1)
+        self.selected_index = _clamp_index(index + delta, len(self.rows))
 
     def _clamp_selection(self) -> None:
         if not self.rows:
@@ -943,17 +984,17 @@ class DataTable(Widget):
             return
         if self.selected_index is None:
             return
-        self.selected_index = min(max(0, self.selected_index), len(self.rows) - 1)
+        self.selected_index = _clamp_index(self.selected_index, len(self.rows))
 
     def _ensure_selection_visible(self, visible_height: int) -> None:
         if self.selected_index is None or visible_height <= 0:
             return
-        if self.selected_index < self.scroll_offset:
-            self.scroll_offset = self.selected_index
-        if self.selected_index >= self.scroll_offset + visible_height:
-            self.scroll_offset = self.selected_index - visible_height + 1
-        max_offset = max(0, len(self.rows) - visible_height)
-        self.scroll_offset = max(0, min(self.scroll_offset, max_offset))
+        self.scroll_offset = _scroll_offset_for_index(
+            self.selected_index,
+            self.scroll_offset,
+            visible_height,
+            len(self.rows),
+        )
 
 
 class TreeView(Widget):
@@ -994,7 +1035,7 @@ class TreeView(Widget):
         visible = self._visible_nodes()
         if not visible:
             return None
-        self.selected_index = min(max(0, self.selected_index), len(visible) - 1)
+        self.selected_index = _clamp_index(self.selected_index, len(visible))
         return visible[self.selected_index][0]
 
     def preferred_size(self, axis: str) -> int:
@@ -1034,10 +1075,10 @@ class TreeView(Widget):
     def handle_key(self, key: str) -> bool:
         visible = self._visible_nodes()
         if key == "up":
-            self.selected_index = max(0, self.selected_index - 1)
+            self.selected_index = _clamp_index(self.selected_index - 1, len(visible))
             return True
         if key == "down":
-            self.selected_index = min(max(0, len(visible) - 1), self.selected_index + 1)
+            self.selected_index = _clamp_index(self.selected_index + 1, len(visible))
             return True
         if key in {"right", "enter"}:
             node = self.selected_node
@@ -1076,13 +1117,13 @@ class TreeView(Widget):
             self.selected_index = 0
             self.scroll_offset = 0
             return
-        self.selected_index = min(max(0, self.selected_index), len(visible) - 1)
-        if self.selected_index < self.scroll_offset:
-            self.scroll_offset = self.selected_index
-        if self.selected_index >= self.scroll_offset + height:
-            self.scroll_offset = self.selected_index - height + 1
-        max_offset = max(0, len(visible) - height)
-        self.scroll_offset = max(0, min(self.scroll_offset, max_offset))
+        self.selected_index = _clamp_index(self.selected_index, len(visible))
+        self.scroll_offset = _scroll_offset_for_index(
+            self.selected_index,
+            self.scroll_offset,
+            height,
+            len(visible),
+        )
 
 
 class LogView(Widget):
@@ -1395,6 +1436,28 @@ def normalize_key(key: str) -> str:
     ``"Shift + Tab"`` becomes ``"shift+tab"``.
     """
     return key.lower().replace(" ", "")
+
+
+def _clamp_index(index: int, count: int) -> int:
+    if count <= 0:
+        return 0
+    return min(max(0, index), count - 1)
+
+
+def _scroll_offset_for_index(
+    index: int,
+    scroll_offset: int,
+    visible_height: int,
+    count: int,
+) -> int:
+    if visible_height <= 0:
+        return scroll_offset
+    if index < scroll_offset:
+        scroll_offset = index
+    if index >= scroll_offset + visible_height:
+        scroll_offset = index - visible_height + 1
+    max_offset = max(0, count - visible_height)
+    return max(0, min(scroll_offset, max_offset))
 
 
 def _allocate_sizes(total: int, sizes: list[Size], preferred: list[int]) -> list[int]:
