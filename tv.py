@@ -1597,6 +1597,9 @@ def _parse_modified_arrow(sequence: str) -> str:
 
 
 def _poll_key_windows() -> Optional[str]:
+    key = _poll_console_input_key_windows()
+    if key is not None:
+        return key
     with contextlib.suppress(ImportError):
         msvcrt = __import__("msvcrt")
 
@@ -1620,6 +1623,118 @@ def _poll_key_windows() -> Optional[str]:
             return key
         return char
     return None
+
+
+def _poll_console_input_key_windows() -> Optional[str]:
+    if os.name != "nt":
+        return None
+    with contextlib.suppress(Exception):
+        windll = getattr(ctypes, "windll", None)
+        if windll is None:
+            return None
+        kernel32 = windll.kernel32
+        handle = kernel32.GetStdHandle(-10)
+        pending = ctypes.c_ulong()
+        if kernel32.GetNumberOfConsoleInputEvents(handle, ctypes.byref(pending)) == 0:
+            return None
+        while pending.value:
+            record = _WindowsInputRecord()
+            read = ctypes.c_ulong()
+            if (
+                kernel32.ReadConsoleInputW(
+                    handle,
+                    ctypes.byref(record),
+                    1,
+                    ctypes.byref(read),
+                )
+                == 0
+            ):
+                return None
+            if read.value == 0:
+                return None
+            pending.value -= 1
+            if record.EventType != 0x0001:
+                continue
+            event = record.Event.KeyEvent
+            if not event.bKeyDown:
+                continue
+            key = _windows_key_name(
+                event.uChar.UnicodeChar,
+                event.wVirtualKeyCode,
+                event.dwControlKeyState,
+            )
+            if key is not None:
+                return key
+    return None
+
+
+def _windows_key_name(
+    char: str,
+    virtual_key: int,
+    control_state: int,
+) -> Optional[str]:
+    left_alt_pressed = 0x0002
+    right_alt_pressed = 0x0001
+    shift_pressed = 0x0010
+    virtual_key_tab = 0x09
+
+    alt = bool(control_state & (left_alt_pressed | right_alt_pressed))
+    shift = bool(control_state & shift_pressed)
+    named = {
+        0x26: "up",
+        0x28: "down",
+        0x25: "left",
+        0x27: "right",
+        0x24: "home",
+        0x23: "end",
+        0x21: "pageup",
+        0x22: "pagedown",
+        0x2E: "delete",
+        0x08: "backspace",
+        0x0D: "enter",
+        0x1B: "escape",
+    }.get(virtual_key)
+    if virtual_key == virtual_key_tab:
+        named = "shift+tab" if shift else "tab"
+    if named is not None:
+        return f"alt+{named}" if alt else named
+    if char == "\x03":
+        return "ctrl+c"
+    if char and char.isprintable():
+        key = char.lower()
+        return f"alt+{key}" if alt else key
+    return None
+
+
+class _WindowsCharUnion(ctypes.Union):
+    _fields_ = [
+        ("UnicodeChar", ctypes.c_wchar),
+        ("AsciiChar", ctypes.c_char),
+    ]
+
+
+class _WindowsKeyEventRecord(ctypes.Structure):
+    _fields_ = [
+        ("bKeyDown", ctypes.c_int),
+        ("wRepeatCount", ctypes.c_ushort),
+        ("wVirtualKeyCode", ctypes.c_ushort),
+        ("wVirtualScanCode", ctypes.c_ushort),
+        ("uChar", _WindowsCharUnion),
+        ("dwControlKeyState", ctypes.c_ulong),
+    ]
+
+
+class _WindowsEventUnion(ctypes.Union):
+    _fields_ = [
+        ("KeyEvent", _WindowsKeyEventRecord),
+    ]
+
+
+class _WindowsInputRecord(ctypes.Structure):
+    _fields_ = [
+        ("EventType", ctypes.c_ushort),
+        ("Event", _WindowsEventUnion),
+    ]
 
 
 class TerminalSession:

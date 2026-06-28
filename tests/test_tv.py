@@ -265,6 +265,14 @@ def test_csi_key_sequence_parsing() -> None:
     assert tv._parse_csi_sequence("1;3A") == "alt+up"
 
 
+def test_windows_key_name_preserves_alt_modifier() -> None:
+    # Values mirror Windows KEY_EVENT_RECORD constants.
+    assert tv._windows_key_name("1", ord("1"), 0x0002) == "alt+1"
+    assert tv._windows_key_name("Q", ord("Q"), 0) == "q"
+    assert tv._windows_key_name("", 0x09, 0x0010) == "shift+tab"
+    assert tv._windows_key_name("", 0x28, 0) == "down"
+
+
 def test_data_table_selection_and_scrolling() -> None:
     rows = [{"name": f"row-{index}"} for index in range(5)]
     table = tv.DataTable([tv.Column("Name", "name")], rows)
