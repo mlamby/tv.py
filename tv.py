@@ -1,4 +1,8 @@
 """Small single-file terminal dashboard framework.
+
+Copyright (c) 2026 Michael Lamb
+SPDX-License-Identifier: MIT
+
 This module is intentionally kept as the copyable framework file.
 """
 
