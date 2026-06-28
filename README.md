@@ -155,6 +155,11 @@ terminal/font combinations.
   numbers.
 - Public types and functions are documented inline in [tv.py](tv.py).
 
+## AI Assistance
+
+This codebase has been developed with assistance from Codex. Changes are
+reviewed, tested, and maintained by the project author.
+
 ## Development
 
 Run the tests with:
