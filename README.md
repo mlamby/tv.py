@@ -26,7 +26,8 @@ status screens, tables, trees, property views, and logs.
 - A modern terminal with ANSI support, such as Windows Terminal or a common
   Linux/macOS terminal.
 
-There are no runtime third-party dependencies.
+There are no required runtime third-party dependencies. Optional emoji-aware
+measurement can use `regex` and `wcwidth`.
 
 ## Quick Start
 
@@ -143,9 +144,27 @@ app.bind("alt+2", lambda: app.show_screen("health"))
 
 The built-in icons are text symbols rather than colorful emoji. This keeps
 terminal cell widths predictable and lets ANSI styles color the glyphs. Emoji
-can work in application labels, but they may flicker or misalign in some
-terminals because emoji width and presentation are not consistent across
-terminal/font combinations.
+can work in application labels, but terminal rendering still depends on the
+terminal and font.
+
+For emoji-aware grapheme clustering, clipping, and display-width measurement,
+install the optional dependencies and enable support explicitly:
+
+```sh
+python -m pip install regex wcwidth
+```
+
+Run the install command with the same Python interpreter or virtual environment
+that runs your dashboard.
+
+```python
+import tv
+
+tv.enable_emoji_support()
+```
+
+If the optional dependencies are missing, `enable_emoji_support()` raises a
+clear error with the install command.
 
 ## Project Documentation
 

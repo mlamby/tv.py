@@ -22,6 +22,7 @@ def test_public_api_is_exported_for_copyable_framework_use() -> None:
         "TreeView",
         "LogView",
         "Widget",
+        "enable_emoji_support",
     ]:
         assert namespace[name] is getattr(tv, name)
 
@@ -31,6 +32,59 @@ def test_unicode_cell_width_and_alignment() -> None:
     assert tv.display_width("表") == 2
     assert tv.clip_cells("a表b", 3) == "a表"
     assert tv.align_text("ok", 4, "right") == "  ok"
+
+
+def test_default_mode_keeps_dependency_free_unicode_measurement() -> None:
+    tv.enable_emoji_support(False)
+
+    assert tv.display_width("abc") == 3
+    assert tv.display_width("表") == 2
+    assert tv.clip_cells("a表b", 3) == "a表"
+    assert tv.align_text("ok", 4, "right") == "  ok"
+
+
+def test_enable_emoji_support_reports_missing_optional_dependencies(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    tv.enable_emoji_support(False)
+    real_import_module = tv.importlib.import_module
+
+    def missing_optional_dependency(name: str, package: object = None) -> object:
+        del package
+        if name == "regex":
+            raise ImportError(name)
+        return real_import_module(name)
+
+    monkeypatch.setattr(tv.importlib, "import_module", missing_optional_dependency)
+
+    with pytest.raises(RuntimeError, match="pip install regex wcwidth") as exc_info:
+        tv.enable_emoji_support()
+
+    assert tv.sys.executable in str(exc_info.value)
+    assert "this interpreter" in str(exc_info.value)
+    assert tv.display_width("表") == 2
+
+
+def test_optional_emoji_support_measures_and_clips_graphemes() -> None:
+    pytest.importorskip("regex")
+    pytest.importorskip("wcwidth")
+
+    tv.enable_emoji_support()
+    try:
+        assert tv.display_width("✅") == 2
+        assert tv.display_width("👍🏽") == 2
+        assert tv.display_width("👨‍👩‍👧‍👦") == 2
+        assert tv.clip_cells("a✅b", 3) == "a✅"
+        assert tv.clip_cells("👍🏽ok", 2) == "👍🏽"
+        assert tv.clip_cells("👨‍👩‍👧‍👦ok", 2) == "👨‍👩‍👧‍👦"
+        assert tv.align_text("✅", 4, "right") == "  ✅"
+
+        buffer = tv.ScreenBuffer(5, 1)
+        buffer.write(0, 0, "✅x")
+        assert buffer.line_text(0) == "✅x  "
+        assert [cell.char for cell in buffer._cells[0]] == ["✅", "", "x", " ", " "]
+    finally:
+        tv.enable_emoji_support(False)
 
 
 def test_painter_clips_writes_and_boxes() -> None:
