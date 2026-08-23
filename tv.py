@@ -10,6 +10,8 @@ from __future__ import annotations
 
 import contextlib
 import ctypes
+import importlib
+import importlib.util
 import os
 import select
 import shutil
@@ -53,6 +55,48 @@ DEFAULT_STYLES: dict[str, str] = {
     "error": "31",
 }
 
+EMOJI_SUPPORT_ERROR = (
+    "Emoji support requires optional dependencies: pip install regex wcwidth"
+)
+
+_emoji_support_enabled = False
+_emoji_findall: Optional[Callable[[str, str], list[str]]] = None
+_emoji_wcswidth: Optional[Callable[[str], int]] = None
+
+
+def enable_emoji_support(enabled: bool = True) -> None:
+    """Enable or disable optional emoji-aware text measurement.
+
+    Emoji support uses optional runtime dependencies for full grapheme cluster
+    splitting and terminal cell width measurement. Default behavior remains
+    dependency-free until this function is called with ``enabled=True``.
+    """
+    global _emoji_findall, _emoji_support_enabled, _emoji_wcswidth
+    if not enabled:
+        _emoji_support_enabled = False
+        return
+    try:
+        regex_module = importlib.import_module("regex")
+        wcwidth_module = importlib.import_module("wcwidth")
+    except ImportError as exc:
+        raise RuntimeError(_emoji_support_error_message()) from exc
+    _emoji_findall = cast(Callable[[str, str], list[str]], regex_module.findall)
+    _emoji_wcswidth = cast(Callable[[str], int], wcwidth_module.wcswidth)
+    _emoji_support_enabled = True
+
+
+def _emoji_support_error_message() -> str:
+    if importlib.util.find_spec("pip") is None:
+        return (
+            f"{EMOJI_SUPPORT_ERROR}. Current interpreter: {sys.executable}. "
+            "Install the packages into this interpreter, or recreate the virtual "
+            "environment so its python and pip commands match."
+        )
+    return (
+        f"{EMOJI_SUPPORT_ERROR}. Install them for this interpreter with: "
+        f"{sys.executable} -m pip install regex wcwidth"
+    )
+
 
 @dataclass(frozen=True)
 class RenderContext:
@@ -95,6 +139,8 @@ def cell_width(text: str) -> int:
     """
     if not text:
         return 0
+    if _emoji_support_enabled and _emoji_wcswidth is not None:
+        return max(0, _emoji_wcswidth(text))
     first = text[0]
     category = unicodedata.category(first)
     if category in {"Mn", "Me", "Cf"}:
@@ -112,6 +158,9 @@ def iter_clusters(text: str) -> Iterator[str]:
     implementation, but it is enough for safe clipping in common telemetry
     dashboards.
     """
+    if _emoji_support_enabled and _emoji_findall is not None:
+        yield from _emoji_findall(r"\X", text)
+        return
     cluster = ""
     for char in text:
         if not cluster:
@@ -246,8 +295,8 @@ class ScreenBuffer:
                 break
             self._clear_wide_overlaps(y, col, width, style)
             self._cells[y][col] = Cell(cluster, style)
-            if width == 2:
-                self._cells[y][col + 1] = Cell("", style)
+            for offset in range(1, width):
+                self._cells[y][col + offset] = Cell("", style)
             col += width
 
     def _clear_wide_overlaps(
@@ -266,24 +315,31 @@ class ScreenBuffer:
         if width <= 0:
             return
 
-        def clear_pair(left: int) -> None:
-            if 0 <= left < self.width:
-                self._cells[y][left] = Cell(" ", style)
-            if 0 <= left + 1 < self.width:
-                self._cells[y][left + 1] = Cell(" ", style)
+        def clear_cluster(left: int) -> None:
+            if not 0 <= left < self.width:
+                return
+            width = max(1, cell_width(self._cells[y][left].char))
+            for offset in range(width):
+                if 0 <= left + offset < self.width:
+                    self._cells[y][left + offset] = Cell(" ", style)
+
+        def leading_cell(col: int) -> int:
+            while col > 0 and self._cells[y][col].char == "":
+                col -= 1
+            return col
 
         x_start = max(0, x)
         x_end = min(self.width, x + width)
         if x_start >= x_end:
             return
         if x_start > 0 and self._cells[y][x_start].char == "":
-            clear_pair(x_start - 1)
+            clear_cluster(leading_cell(x_start))
         for col in range(x_start, x_end):
             cell = self._cells[y][col]
             if cell.char == "":
-                clear_pair(col - 1)
-            elif cell_width(cell.char) == 2:
-                clear_pair(col)
+                clear_cluster(leading_cell(col))
+            elif cell_width(cell.char) > 1:
+                clear_cluster(col)
 
     def line_text(self, y: int) -> str:
         """Return one rendered line without ANSI style sequences."""
@@ -1965,6 +2021,7 @@ __all__ = [
     "clip_cells",
     "CSI",
     "display_width",
+    "enable_emoji_support",
     "flush",
     "iter_clusters",
     "normalize_key",

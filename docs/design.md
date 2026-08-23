@@ -293,6 +293,8 @@ Unicode:
 * Unicode is the native/default mode.
 * Use Unicode box-drawing characters for panels.
 * Use Unicode tree glyphs for TreeView.
+* Color emoji support is outside the dependency-free default path. It may be
+  enabled explicitly with optional Unicode measurement dependencies.
 * Provide a small `Icons` namespace or class with semantic icons such as:
 
   * `Icons.OK`

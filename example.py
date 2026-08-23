@@ -9,6 +9,11 @@ from typing import Any
 
 import tv
 
+tv.Icons.OK = "✅"
+tv.Icons.WARNING = "🟡"
+tv.Icons.ERROR = "❌"
+tv.enable_emoji_support()
+
 
 @dataclass
 class Device:
@@ -123,7 +128,9 @@ def create_layout(app: tv.App, widgets: DashboardWidgets) -> None:
     app.bind("alt+2", lambda: app.show_screen("health"))
 
 
-def run_main_loop(app: tv.App, model: DashboardModel, widgets: DashboardWidgets) -> None:
+def run_main_loop(
+    app: tv.App, model: DashboardModel, widgets: DashboardWidgets
+) -> None:
     last_log = time.monotonic()
     with app.session():
         while app.running:
