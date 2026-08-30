@@ -337,6 +337,20 @@ def test_borderless_panel_padding_still_applies() -> None:
     assert buffer.line_text(1) == " pad    "
 
 
+def test_text_accepts_static_and_dynamic_styles() -> None:
+    static = tv.Text("warning", style="warning")
+    dynamic = tv.Text("error", style=lambda: "error")
+    buffer = tv.ScreenBuffer(8, 2)
+
+    static.render(tv.Painter(buffer).child(0, 0, 8, 1), tv.RenderContext(8, 1))
+    dynamic.render(tv.Painter(buffer).child(0, 1, 8, 1), tv.RenderContext(8, 1))
+
+    assert buffer.line_text(0).startswith("warning")
+    assert buffer._cells[0][0].style == "warning"
+    assert buffer.line_text(1).startswith("error")
+    assert buffer._cells[1][0].style == "error"
+
+
 def test_screen_switching_preserves_widget_state() -> None:
     first = tv.DataTable([tv.Column("Name", "name")], [{"name": "a"}, {"name": "b"}])
     second = tv.DataTable([tv.Column("Name", "name")], [{"name": "c"}])
@@ -440,6 +454,62 @@ def test_data_table_resolves_callable_rows_for_render_and_selection() -> None:
     assert table.selected_item == rows[1]
 
 
+def test_property_grid_static_and_callable_styles_use_raw_values() -> None:
+    seen: list[object] = []
+    grid = tv.PropertyGrid(
+        {"state": "warning", "count": 3},
+        [
+            tv.Property("State", "state", style="muted"),
+            tv.Property(
+                "Count",
+                "count",
+                formatter=lambda value: f"{value} items",
+                style=lambda value: seen.append(value) or "ok",
+            ),
+        ],
+    )
+    buffer = tv.ScreenBuffer(16, 2)
+
+    grid.render(tv.Painter(buffer), tv.RenderContext(16, 2))
+
+    assert buffer.line_text(0).startswith("State warning")
+    assert buffer._cells[0][6].style == "muted"
+    assert buffer.line_text(1).startswith("Count 3 items")
+    assert buffer._cells[1][6].style == "ok"
+    assert seen == [3]
+
+
+def test_column_static_and_callable_styles() -> None:
+    rows = [{"name": "api", "state": "error"}]
+    table = tv.DataTable(
+        [
+            tv.Column("Name", "name", style="muted"),
+            tv.Column("State", "state", style=lambda row: row["state"]),
+        ],
+        rows,
+        selected_index=None,
+    )
+    buffer = tv.ScreenBuffer(20, 2)
+
+    table.render(tv.Painter(buffer), tv.RenderContext(20, 2, False, table))
+
+    assert buffer.line_text(1).startswith("api")
+    assert buffer._cells[1][0].style == "muted"
+    assert buffer._cells[1][10].style == "error"
+
+
+def test_column_style_does_not_override_focused_selected_row() -> None:
+    table = tv.DataTable(
+        [tv.Column("Name", "name", style="error")],
+        [{"name": "api"}],
+    )
+    buffer = tv.ScreenBuffer(10, 2)
+
+    table.render(tv.Painter(buffer), tv.RenderContext(10, 2, True, table))
+
+    assert buffer._cells[1][0].style == "selected"
+
+
 def test_selected_table_style_resets_before_newline() -> None:
     table = tv.DataTable([tv.Column("Name", "name")], [{"name": "alpha"}])
     row = tv.HBox()
@@ -535,6 +605,55 @@ def test_tree_view_resolves_callable_roots_for_render_and_selection() -> None:
     assert tree.selected_node["id"] == "next"
 
 
+def test_tree_view_string_accessors_and_styles() -> None:
+    root = {
+        "id": "root",
+        "label": "root",
+        "state": "warning",
+        "children": [
+            {"id": "child", "label": "child", "state": "ok", "children": []}
+        ],
+    }
+    tree = tv.TreeView(
+        [root],
+        id="id",
+        label="label",
+        children="children",
+        style=lambda node: node["state"],
+    )
+    buffer = tv.ScreenBuffer(12, 2)
+
+    tree.render(tv.Painter(buffer), tv.RenderContext(12, 2, False, tree))
+    assert buffer.line_text(0).startswith("▸ root")
+    assert buffer._cells[0][0].style == "warning"
+
+    tree.handle_key("right")
+    tree.render(tv.Painter(buffer), tv.RenderContext(12, 2, False, tree))
+    assert buffer.line_text(1).startswith("  └─  child")
+    assert buffer._cells[1][0].style == "ok"
+
+
+def test_tree_view_static_style_and_focused_selection_override() -> None:
+    tree = tv.TreeView([{"name": "root"}], label="name", style="muted")
+    buffer = tv.ScreenBuffer(10, 1)
+
+    tree.render(tv.Painter(buffer), tv.RenderContext(10, 1, False, tree))
+    assert buffer._cells[0][0].style == "muted"
+
+    tree.render(tv.Painter(buffer), tv.RenderContext(10, 1, True, tree))
+    assert buffer._cells[0][0].style == "selected"
+
+
+def test_tree_view_without_roots_renders_empty_safely() -> None:
+    tree = tv.TreeView()
+    buffer = tv.ScreenBuffer(8, 2)
+
+    tree.render(tv.Painter(buffer), tv.RenderContext(8, 2, True, tree))
+
+    assert tree.selected_node is None
+    assert buffer.lines() == ["        ", "        "]
+
+
 def test_log_view_follow_and_scrollback() -> None:
     logs = ["one", "two", "three"]
     view = tv.LogView(logs)
@@ -550,6 +669,32 @@ def test_log_view_follow_and_scrollback() -> None:
     view.render(tv.Painter(buffer), tv.RenderContext(10, 2, True, view))
     assert view.follow
     assert view.scroll_offset == 2
+
+
+def test_log_view_string_text_accessor_and_styles() -> None:
+    logs = [
+        {"message": "started", "level": "ok"},
+        {"message": "failed", "level": "error"},
+    ]
+    view = tv.LogView(logs, text="message", style=lambda entry: entry["level"])
+    buffer = tv.ScreenBuffer(10, 2)
+
+    view.render(tv.Painter(buffer), tv.RenderContext(10, 2, False, view))
+
+    assert buffer.line_text(0).startswith("started")
+    assert buffer._cells[0][0].style == "ok"
+    assert buffer.line_text(1).startswith("failed")
+    assert buffer._cells[1][0].style == "error"
+
+
+def test_log_view_static_style() -> None:
+    view = tv.LogView(["one"], style="muted")
+    buffer = tv.ScreenBuffer(10, 1)
+
+    view.render(tv.Painter(buffer), tv.RenderContext(10, 1, False, view))
+
+    assert buffer.line_text(0).startswith("one")
+    assert buffer._cells[0][0].style == "muted"
 
 
 def test_log_view_resumes_follow_when_scrolled_to_visible_bottom() -> None:

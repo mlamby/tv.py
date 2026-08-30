@@ -9,9 +9,6 @@ from typing import Any
 
 import tv
 
-tv.Icons.OK = "✅"
-tv.Icons.WARNING = "🟡"
-tv.Icons.ERROR = "❌"
 tv.enable_emoji_support()
 
 
@@ -80,8 +77,9 @@ def create_widgets(model: DashboardModel) -> DashboardWidgets:
     tree = tv.TreeView(
         model.roots,
         id="path",
-        label=lambda node: f"{status_icon(node.status)} {node.name}",
+        label="name",
         children="children",
+        style=lambda node: status_style_name(node.status),
     )
     tree.expanded_ids.add("/svc")
     details = tv.PropertyGrid(
@@ -103,7 +101,11 @@ def create_widgets(model: DashboardModel) -> DashboardWidgets:
     )
     banner = tv.Text(
         lambda: "Tab focus | Alt-1 overview | Alt-2 health | q exits",
-        "muted",
+        lambda: (
+            "warning"
+            if any(device.status != "ok" for device in model.devices)
+            else "muted"
+        ),
     )
     return DashboardWidgets(table, tree, details, log_view, banner)
 
@@ -190,16 +192,6 @@ def status_style_name(status: str) -> str:
     if status == "error":
         return "error"
     return "normal"
-
-
-def status_icon(status: str) -> str:
-    if status == "ok":
-        return tv.Icons.OK
-    if status == "warning":
-        return tv.Icons.WARNING
-    if status == "error":
-        return tv.Icons.ERROR
-    return " "
 
 
 if __name__ == "__main__":
