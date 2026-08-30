@@ -1,8 +1,8 @@
-"""Single-message binding exploration demo for tv.py.
+"""Multi-message binding exploration demo for tv.py.
 
 This demo keeps the framework API unchanged. It shows the current application
-pattern for a large nested telemetry message: receive a message, derive widget
-view models from it, point widgets at the new data, then render.
+pattern for nested telemetry messages: receive messages, derive widget view
+models from them, point widgets at the new data, then render.
 """
 
 from __future__ import annotations
@@ -37,14 +37,21 @@ class LeafField:
 
 
 @dataclass
-class MessageState:
+class ReceivedMessage:
+    name: str
+    schema: str
     message: dict[str, Any]
     received_at: float
+    interval_seconds: float
     sequence: int = 0
 
-    def accept(self, message: dict[str, Any]) -> None:
+    def accept(
+        self,
+        message: dict[str, Any],
+        received_at: Optional[float] = None,
+    ) -> None:
         self.message = message
-        self.received_at = time.time()
+        self.received_at = time.time() if received_at is None else received_at
         self.sequence += 1
 
     @property
@@ -62,7 +69,24 @@ class MessageState:
 
     @property
     def branch_count(self) -> int:
-        return count_nodes(build_tree_roots(self.message))
+        return count_nodes(build_tree_roots(self.name, self.message))
+
+
+@dataclass
+class MessageState:
+    messages: list[ReceivedMessage]
+
+    @property
+    def sequence(self) -> int:
+        return sum(message.sequence for message in self.messages)
+
+    @property
+    def leaf_count(self) -> int:
+        return sum(message.leaf_count for message in self.messages)
+
+    @property
+    def branch_count(self) -> int:
+        return count_nodes(build_message_roots(self.messages))
 
 
 @dataclass
@@ -74,7 +98,6 @@ class MessageWidgets:
 
 
 MESSAGE_ID = tv.path("header.message_id")
-SOURCE = tv.path("header.source")
 HEALTH = tv.path("status.overall_health", default="unknown")
 SPEED_MS = tv.path("navigation.speed_ms", default=0.0, transform=float)
 SPEED_KNOTS = tv.path(
@@ -82,27 +105,20 @@ SPEED_KNOTS = tv.path(
     default=0.0,
     transform=lambda value: float(value) * KNOTS_PER_METER_PER_SECOND,
 )
-STATE_MESSAGE_ID = tv.path("message.header.message_id")
-STATE_SOURCE = tv.path("message.header.source")
-STATE_HEALTH = tv.path("message.status.overall_health", default="unknown")
-STATE_SPEED_MS = tv.path("message.navigation.speed_ms", default=0.0, transform=float)
-STATE_SPEED_KNOTS = tv.path(
+DETAIL_MESSAGE_ID = tv.path("message.header.message_id", default="multiple")
+DETAIL_SOURCE = tv.path("message.header.source", default="multiple")
+DETAIL_SCHEMA = tv.path("schema", default="multiple")
+DETAIL_HEALTH = tv.path("message.status.overall_health", default="mixed")
+DETAIL_SPEED_MS = tv.path("message.navigation.speed_ms", default=0.0, transform=float)
+DETAIL_SPEED_KNOTS = tv.path(
     "message.navigation.speed_ms",
     default=0.0,
     transform=lambda value: float(value) * KNOTS_PER_METER_PER_SECOND,
 )
 
 
-def make_message(sequence: int) -> dict[str, Any]:
+def make_navigation_message(sequence: int) -> dict[str, Any]:
     speed_ms = 9.8 + random.uniform(-0.7, 0.7)
-    battery_percent = max(0.0, min(100.0, 82.0 + random.uniform(-4.0, 4.0)))
-    cpu_temp_c = 51.0 + random.uniform(-6.0, 12.0)
-    health = "ok"
-    if battery_percent < 25.0 or cpu_temp_c > 82.0:
-        health = "error"
-    elif battery_percent < 45.0 or cpu_temp_c > 70.0:
-        health = "warning"
-
     return {
         "header": {
             "message_id": f"nav-{sequence:06d}",
@@ -110,9 +126,8 @@ def make_message(sequence: int) -> dict[str, Any]:
             "schema": "vessel.navigation.v2",
         },
         "status": {
-            "overall_health": health,
-            "battery_percent": round(battery_percent, 1),
-            "faults": [] if health == "ok" else ["thermal_margin"],
+            "overall_health": "ok",
+            "tracking": "locked",
         },
         "navigation": {
             "speed_ms": round(speed_ms, 3),
@@ -122,6 +137,27 @@ def make_message(sequence: int) -> dict[str, Any]:
                 "lon": round(151.2153 + random.uniform(-0.0005, 0.0005), 6),
                 "alt_m": round(4.0 + random.uniform(-0.2, 0.2), 2),
             },
+        },
+    }
+
+
+def make_power_message(sequence: int) -> dict[str, Any]:
+    battery_percent = max(0.0, min(100.0, 82.0 + random.uniform(-4.0, 4.0)))
+    health = "ok"
+    if battery_percent < 25.0:
+        health = "error"
+    elif battery_percent < 45.0:
+        health = "warning"
+    return {
+        "header": {
+            "message_id": f"pwr-{sequence:06d}",
+            "source": "power.monitor",
+            "schema": "vessel.power.v1",
+        },
+        "status": {
+            "overall_health": health,
+            "battery_percent": round(battery_percent, 1),
+            "faults": [] if health == "ok" else ["low_battery_margin"],
         },
         "power": {
             "battery": {
@@ -134,6 +170,26 @@ def make_message(sequence: int) -> dict[str, Any]:
                 "current_a": round(7.3 + random.uniform(-1.0, 1.0), 2),
             },
         },
+    }
+
+
+def make_compute_message(sequence: int) -> dict[str, Any]:
+    cpu_temp_c = 51.0 + random.uniform(-6.0, 12.0)
+    health = "ok"
+    if cpu_temp_c > 82.0:
+        health = "error"
+    elif cpu_temp_c > 70.0:
+        health = "warning"
+    return {
+        "header": {
+            "message_id": f"cmp-{sequence:06d}",
+            "source": "edge.compute",
+            "schema": "vessel.compute.v1",
+        },
+        "status": {
+            "overall_health": health,
+            "faults": [] if health == "ok" else ["thermal_margin"],
+        },
         "compute": {
             "cpu": {
                 "load": round(random.uniform(0.35, 0.92), 2),
@@ -141,19 +197,36 @@ def make_message(sequence: int) -> dict[str, Any]:
             },
             "memory": {"used_mb": random.randint(2100, 2800), "total_mb": 4096},
         },
+    }
+
+
+def make_sensor_message(sequence: int) -> dict[str, Any]:
+    imu_dropouts = random.randint(0, 3)
+    gps_online = random.random() > 0.08
+    health = "ok" if gps_online and imu_dropouts < 3 else "warning"
+    return {
+        "header": {
+            "message_id": f"sns-{sequence:06d}",
+            "source": "sensor.fusion",
+            "schema": "vessel.sensors.v3",
+        },
+        "status": {
+            "overall_health": health,
+            "faults": [] if health == "ok" else ["sensor_quality"],
+        },
         "sensors": [
             {
                 "name": "imu",
                 "online": True,
                 "sample_hz": 200,
                 "quality": {
-                    "dropouts": random.randint(0, 3),
+                    "dropouts": imu_dropouts,
                     "jitter_ms": round(random.uniform(0.2, 1.5), 2),
                 },
             },
             {
                 "name": "gps",
-                "online": health != "error",
+                "online": gps_online,
                 "sample_hz": 10,
                 "quality": {
                     "satellites": random.randint(10, 15),
@@ -165,20 +238,40 @@ def make_message(sequence: int) -> dict[str, Any]:
 
 
 def create_state() -> MessageState:
-    state = MessageState({}, time.time())
-    state.accept(make_message(1))
-    return state
+    now = time.time()
+    messages = [
+        ReceivedMessage("navigation", "vessel.navigation.v2", {}, now, 0.8),
+        ReceivedMessage("power", "vessel.power.v1", {}, now, 1.3),
+        ReceivedMessage("compute", "vessel.compute.v1", {}, now, 1.9),
+        ReceivedMessage("sensors", "vessel.sensors.v3", {}, now, 2.7),
+    ]
+    messages[0].accept(make_navigation_message(1), now - 0.2)
+    messages[1].accept(make_power_message(1), now - 0.8)
+    messages[2].accept(make_compute_message(1), now - 1.4)
+    messages[3].accept(make_sensor_message(1), now - 2.0)
+    return MessageState(messages)
 
 
 def create_widgets(state: MessageState) -> MessageWidgets:
     status = tv.Text(lambda: status_line(state), style="normal")
     tree = tv.TreeView(
-        lambda: build_tree_roots(state.message),
+        lambda: build_message_roots(state.messages),
         id="path",
         label=lambda node: f"{node.name} ({node.type_name}, {node.size})",
         children="children",
     )
-    tree.expanded_ids.update({"$", "$.navigation", "$.power", "$.compute", "$.sensors"})
+    tree.expanded_ids.update(
+        {
+            "$.navigation",
+            "$.navigation.navigation",
+            "$.power",
+            "$.power.power",
+            "$.compute",
+            "$.compute.compute",
+            "$.sensors",
+            "$.sensors.sensors",
+        }
+    )
 
     leaves = tv.DataTable(
         columns=[
@@ -195,30 +288,32 @@ def create_widgets(state: MessageState) -> MessageWidgets:
     )
 
     details = tv.PropertyGrid(
-        state,
+        details_source(state, tree),
         [
-            tv.Property("Message", STATE_MESSAGE_ID),
-            tv.Property("Source", STATE_SOURCE),
-            tv.Property("Sequence", "sequence", align="right"),
+            tv.Property("Stream", "name"),
+            tv.Property("Message", DETAIL_MESSAGE_ID),
+            tv.Property("Source", DETAIL_SOURCE),
+            tv.Property("Schema", DETAIL_SCHEMA),
             tv.Property("Received", "received_time"),
             tv.Property("Age", "age_seconds", align="right", formatter=format_age),
             tv.Property(
                 "Health",
-                STATE_HEALTH,
+                DETAIL_HEALTH,
                 style=health_style,
             ),
             tv.Property(
                 "Speed m/s",
-                STATE_SPEED_MS,
+                DETAIL_SPEED_MS,
                 align="right",
                 formatter=format_speed_ms,
             ),
             tv.Property(
                 "Speed knots",
-                STATE_SPEED_KNOTS,
+                DETAIL_SPEED_KNOTS,
                 align="right",
                 formatter=format_knots,
             ),
+            tv.Property("Sequence", "sequence", align="right"),
             tv.Property("Branches", "branch_count", align="right"),
             tv.Property("Leaf fields", "leaf_count", align="right"),
         ],
@@ -242,13 +337,24 @@ def create_layout(app: tv.App, widgets: MessageWidgets) -> None:
 
 
 def run_main_loop(app: tv.App, state: MessageState, widgets: MessageWidgets) -> None:
-    next_message_at = time.monotonic()
+    generators = [
+        make_navigation_message,
+        make_power_message,
+        make_compute_message,
+        make_sensor_message,
+    ]
+    next_message_at = [
+        time.monotonic() + message.interval_seconds for message in state.messages
+    ]
     with app.session():
         while app.running:
             now = time.monotonic()
-            if now >= next_message_at:
-                state.accept(make_message(state.sequence + 1))
-                next_message_at = now + 1.0
+            for index, message in enumerate(state.messages):
+                if now >= next_message_at[index]:
+                    message.accept(generators[index](message.sequence + 1))
+                    next_message_at[index] = now + message.interval_seconds
+
+            widgets.details.source = details_source(state, widgets.tree)
 
             key = app.poll_key()
             if key:
@@ -261,23 +367,51 @@ def run_main_loop(app: tv.App, state: MessageState, widgets: MessageWidgets) -> 
 def leaves_for_selection(state: MessageState, tree: tv.TreeView) -> list[LeafField]:
     selected = tree.selected_node
     if selected is None:
-        return iter_leaf_fields(state.message)
+        return [
+            leaf
+            for message in state.messages
+            for leaf in iter_leaf_fields(message.message, f"$.{message.name}")
+        ]
     return iter_leaf_fields(selected.value, selected.path)
 
 
+def details_source(state: MessageState, tree: tv.TreeView) -> ReceivedMessage:
+    selected = tree.selected_node
+    if selected is not None:
+        for message in state.messages:
+            if selected.path == f"$.{message.name}" or selected.path.startswith(
+                f"$.{message.name}."
+            ):
+                return message
+    return min(state.messages, key=lambda message: message.age_seconds)
+
+
 def status_line(state: MessageState) -> str:
-    return (
-        f"Health {str(HEALTH(state.message)).upper()} | "
-        f"Speed {float(SPEED_KNOTS(state.message)):5.1f} kn "
-        f"({float(SPEED_MS(state.message)):4.1f} m/s) | "
-        f"Message {MESSAGE_ID(state.message)} | "
-        f"Age {format_age(state.age_seconds)} | "
-        "Tab focus | q exits"
+    latest = min(state.messages, key=lambda message: message.age_seconds)
+    return " | ".join(
+        [
+            f"Streams {len(state.messages)}",
+            f"Latest {latest.name} {MESSAGE_ID(latest.message)}",
+            f"Age {format_age(latest.age_seconds)}",
+            f"Nav {float(SPEED_KNOTS(state.messages[0].message)):5.1f} kn",
+            "Tab focus | q exits",
+        ]
     )
 
 
-def build_tree_roots(message: Any) -> list[FieldNode]:
-    root = build_tree_node("$", "message", message)
+def build_message_roots(messages: list[ReceivedMessage]) -> list[FieldNode]:
+    return [
+        root
+        for root in (
+            build_tree_node(f"$.{message.name}", message.name, message.message)
+            for message in messages
+        )
+        if root is not None
+    ]
+
+
+def build_tree_roots(name: str, message: Any) -> list[FieldNode]:
+    root = build_tree_node(f"$.{name}", name, message)
     return [root] if root is not None else []
 
 
