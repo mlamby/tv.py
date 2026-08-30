@@ -159,13 +159,14 @@ Built-in widgets for v1:
 * A column should support:
 
   * title,
-  * attribute name or accessor function,
+  * attribute/key name or accessor function,
   * fixed/auto/flexible width,
   * alignment,
   * optional formatter,
   * optional style accessor.
 * The table should support:
 
+  * concrete row lists or zero-argument row providers,
   * header row,
   * vertical scrolling,
   * zero or one selected row,
@@ -192,17 +193,20 @@ table = DataTable(
 
 * Displays arbitrary application objects as a tree.
 * Do not require application objects to inherit from framework classes.
+* Roots should accept concrete lists or zero-argument root providers.
 * Configure the tree with accessors:
 
 ```python
 tree = TreeView(
     roots=devices,
-    id=lambda node: node.path,
-    label=lambda node: node.name,
-    children=lambda node: node.children,
+    id="path",
+    label="name",
+    children="children",
 )
 ```
 
+* Accessors should accept attribute/key names or callables, matching
+  `DataTable` and `PropertyGrid`.
 * The `id` accessor should provide stable identity for preserving expanded/collapsed state.
 * Default identity may be Python object identity, but documentation should recommend stable IDs.
 * TreeView should own:
@@ -216,7 +220,9 @@ tree = TreeView(
 `PropertyGrid`:
 
 * Displays key/value properties for one object or a list of property descriptors.
-* Should support labels, values, alignment, optional formatting, and optional semantic style.
+* Should support labels, attribute/key names or accessor functions, alignment,
+  optional formatting, and optional semantic style.
+* Style accessors should receive the raw value before formatting.
 * Useful for showing details of a selected object.
 
 `LogView`:

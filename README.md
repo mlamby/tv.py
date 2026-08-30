@@ -100,6 +100,48 @@ The application owns the main loop and domain data. Widgets own presentation
 state such as selection, scroll offsets, and tree expansion. Accessors connect
 application objects to widgets.
 
+`Column` values, `Property` values, and `TreeView` `id`, `label`, and
+`children` accessors may be attribute/key names or callables. Use a field name
+for direct reads such as `"status"` or `"children"`, and use a callable when
+the display value is derived from more than one field.
+
+`DataTable.rows` and `TreeView.roots` may be concrete lists or zero-argument
+callables that return the current list. Callable sources are resolved when the
+widget renders, handles keys, or reports its selected item/node:
+
+```python
+latest_message = {}
+
+tree = TreeView(
+    roots=lambda: build_tree_roots(latest_message),
+    id="path",
+    label="name",
+    children="children",
+)
+
+table = DataTable(
+    columns=[Column("Path", "path"), Column("Value", "value")],
+    rows=lambda: leaf_fields_under(tree.selected_node),
+)
+```
+
+Use `path()` for nested field access in dictionaries, objects, and indexed
+lists. It can be passed anywhere a widget expects an accessor:
+
+```python
+health = path("status.overall_health", default="unknown")
+wrapped_health = path("message.status.overall_health", default="unknown")
+speed_knots = path(
+    "navigation.speed_ms",
+    default=0.0,
+    transform=lambda value: float(value) * 1.943844,
+)
+```
+
+`Property` style callables receive the raw value before formatting, so styling
+can be based on domain values even when the displayed text includes units,
+rounding, or other formatting.
+
 A typical loop looks like:
 
 ```python

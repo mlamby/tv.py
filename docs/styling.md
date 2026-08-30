@@ -32,7 +32,18 @@ Column(
     "status",
     style=lambda row: "error" if row.status == "down" else "ok",
 )
+
+Property(
+    "Status",
+    "status",
+    formatter=lambda value: str(value).upper(),
+    style=lambda value: "error" if value == "down" else "ok",
+)
 ```
+
+`Column.style` receives the row object because table styling often depends on
+multiple fields. `Property.style` receives the raw property value before
+formatting, so style decisions do not have to parse the displayed text.
 
 Prefer adding or reusing semantic names over scattering raw color choices
 through app code. That keeps dashboard logic readable and makes themes easy to

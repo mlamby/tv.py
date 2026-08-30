@@ -63,6 +63,8 @@ _emoji_support_enabled = False
 _emoji_findall: Optional[Callable[[str, str], list[str]]] = None
 _emoji_wcswidth: Optional[Callable[[str], int]] = None
 
+Accessor = Union[str, Callable[[Any], Any]]
+
 
 def enable_emoji_support(enabled: bool = True) -> None:
     """Enable or disable optional emoji-aware text measurement.
@@ -822,6 +824,67 @@ class Text(Widget):
         return str(value).splitlines() or [""]
 
 
+class PathAccessor:
+    """Callable accessor for nested mapping/object/list values.
+
+    Args:
+        expression: Dotted field path with optional list indexes, such as
+            ``"status.overall_health"`` or ``"sensors[0].quality.hdop"``.
+        default: Value returned when the path cannot be resolved.
+        transform: Optional callable applied to the resolved value.
+
+    Path segments resolve mappings by key first, then object attributes. Index
+    segments require a sequence-like value that supports integer indexing.
+    """
+
+    def __init__(
+        self,
+        expression: str,
+        default: Any = "",
+        transform: Optional[Callable[[Any], Any]] = None,
+    ) -> None:
+        self.expression = expression
+        self.default = default
+        self.transform = transform
+        self._parts = _parse_path_expression(expression)
+
+    def __call__(self, source: Any) -> Any:
+        value = self._resolve(source)
+        if self.transform:
+            return self.transform(value)
+        return value
+
+    def _resolve(self, source: Any) -> Any:
+        value = source
+        for kind, part in self._parts:
+            if value is None:
+                return self.default
+            if kind == "field":
+                value = _get_value(value, cast(str, part), _MISSING)
+                if value is _MISSING:
+                    return self.default
+                continue
+            try:
+                value = value[cast(int, part)]
+            except (IndexError, KeyError, TypeError):
+                return self.default
+        return value
+
+
+def path(
+    expression: str,
+    default: Any = "",
+    transform: Optional[Callable[[Any], Any]] = None,
+) -> PathAccessor:
+    """Return a callable accessor for a nested field path.
+
+    The returned object can be used anywhere a widget accepts an accessor, for
+    example in :class:`Column`, :class:`Property`, or application-provided
+    status text callbacks.
+    """
+    return PathAccessor(expression, default, transform)
+
+
 @dataclass
 class Property:
     """Descriptor for one :class:`PropertyGrid` row.
@@ -831,12 +894,12 @@ class Property:
         value: Attribute/key name or callable used to read from the grid source.
         align: Alignment for the value column.
         formatter: Optional function that converts the raw value to text.
-        style: Style name or callable receiving the formatted/raw value and
-            returning a style name.
+        style: Style name or callable receiving the raw value and returning a
+            style name.
     """
 
     label: str
-    value: Union[str, Callable[[Any], Any]]
+    value: Accessor
     align: str = "left"
     formatter: Optional[Callable[[Any], str]] = None
     style: Union[str, Callable[[Any], str]] = "normal"
@@ -879,8 +942,9 @@ class PropertyGrid(Widget):
             )
         label_width = min(label_width, max(0, painter.width - 1))
         for y, prop in enumerate(self.properties[: painter.height]):
-            value = self._property_value(prop)
-            style = prop.style(value) if callable(prop.style) else prop.style
+            raw = self._property_raw_value(prop)
+            value = self._format_property_value(prop, raw)
+            style = prop.style(raw) if callable(prop.style) else prop.style
             painter.write(0, y, prop.label, "muted", width=label_width)
             if painter.width > label_width:
                 painter.write(label_width, y, " ", width=1)
@@ -894,12 +958,10 @@ class PropertyGrid(Widget):
                 align=prop.align,
             )
 
-    def _property_value(self, prop: Property) -> str:
-        raw = (
-            prop.value(self.source)
-            if callable(prop.value)
-            else _get_value(self.source, prop.value)
-        )
+    def _property_raw_value(self, prop: Property) -> Any:
+        return _resolve_accessor(self.source, prop.value)
+
+    def _format_property_value(self, prop: Property, raw: Any) -> str:
         if prop.formatter:
             return prop.formatter(raw)
         return str(raw)
@@ -920,7 +982,7 @@ class Column:
     """
 
     title: str
-    value: Union[str, Callable[[Any], Any]]
+    value: Accessor
     width: Size = Size.flex(1)
     align: str = "left"
     formatter: Optional[Callable[[Any], str]] = None
@@ -928,7 +990,7 @@ class Column:
 
     def text_for(self, row: Any) -> str:
         """Return formatted display text for ``row``."""
-        raw = self.value(row) if callable(self.value) else _get_value(row, self.value)
+        raw = _resolve_accessor(row, self.value)
         if self.formatter:
             return self.formatter(raw)
         return str(raw)
@@ -945,7 +1007,8 @@ class DataTable(Widget):
 
     Args:
         columns: Ordered :class:`Column` descriptors.
-        rows: Mutable list of dictionaries or objects owned by the application.
+        rows: Mutable list of dictionaries/objects owned by the application, or
+            a zero-argument callable returning the current list.
         selected_index: Initial selected row index, or ``None`` for no
             selection.
 
@@ -958,7 +1021,7 @@ class DataTable(Widget):
     def __init__(
         self,
         columns: list[Column],
-        rows: Optional[list[Any]] = None,
+        rows: Optional[Union[list[Any], Callable[[], list[Any]]]] = None,
         selected_index: Optional[int] = 0,
     ) -> None:
         self.columns = columns
@@ -971,27 +1034,29 @@ class DataTable(Widget):
         """Return the selected row object, or ``None`` if nothing is selected."""
         if self.selected_index is None:
             return None
-        if 0 <= self.selected_index < len(self.rows):
-            return self.rows[self.selected_index]
+        rows = self._rows()
+        if 0 <= self.selected_index < len(rows):
+            return rows[self.selected_index]
         return None
 
     def preferred_size(self, axis: str) -> int:
         return 4 if axis == "vertical" else 24
 
     def render(self, painter: Painter, context: RenderContext) -> None:
-        widths = _allocate_column_widths(painter.width, self.columns, self.rows)
+        rows = self._rows()
+        widths = _allocate_column_widths(painter.width, self.columns, rows)
         x = 0
         for column, width in zip(self.columns, widths):
             painter.write(x, 0, column.title, "title", width=width, align=column.align)
             x += width
         visible_height = max(0, painter.height - 1)
-        self._clamp_selection()
-        self._ensure_selection_visible(visible_height)
+        self._clamp_selection(rows)
+        self._ensure_selection_visible(visible_height, rows)
         for screen_y in range(visible_height):
             row_index = self.scroll_offset + screen_y
-            if row_index >= len(self.rows):
+            if row_index >= len(rows):
                 break
-            row = self.rows[row_index]
+            row = rows[row_index]
             row_style = (
                 "selected"
                 if context.focused and row_index == self.selected_index
@@ -1011,45 +1076,49 @@ class DataTable(Widget):
                 x += width
 
     def handle_key(self, key: str) -> bool:
+        rows = self._rows()
         if key == "up":
-            self._move_selection(-1)
+            self._move_selection(-1, rows)
             return True
         if key == "down":
-            self._move_selection(1)
+            self._move_selection(1, rows)
             return True
         if key == "home":
-            self.selected_index = 0 if self.rows else None
+            self.selected_index = 0 if rows else None
             self.scroll_offset = 0
             return True
         if key == "end":
-            self.selected_index = len(self.rows) - 1 if self.rows else None
+            self.selected_index = len(rows) - 1 if rows else None
             return True
         return False
 
-    def _move_selection(self, delta: int) -> None:
-        if not self.rows:
+    def _rows(self) -> list[Any]:
+        return self.rows() if callable(self.rows) else self.rows
+
+    def _move_selection(self, delta: int, rows: list[Any]) -> None:
+        if not rows:
             self.selected_index = None
             return
         index = 0 if self.selected_index is None else self.selected_index
-        self.selected_index = _clamp_index(index + delta, len(self.rows))
+        self.selected_index = _clamp_index(index + delta, len(rows))
 
-    def _clamp_selection(self) -> None:
-        if not self.rows:
+    def _clamp_selection(self, rows: list[Any]) -> None:
+        if not rows:
             self.selected_index = None
             self.scroll_offset = 0
             return
         if self.selected_index is None:
             return
-        self.selected_index = _clamp_index(self.selected_index, len(self.rows))
+        self.selected_index = _clamp_index(self.selected_index, len(rows))
 
-    def _ensure_selection_visible(self, visible_height: int) -> None:
+    def _ensure_selection_visible(self, visible_height: int, rows: list[Any]) -> None:
         if self.selected_index is None or visible_height <= 0:
             return
         self.scroll_offset = _scroll_offset_for_index(
             self.selected_index,
             self.scroll_offset,
             visible_height,
-            len(self.rows),
+            len(rows),
         )
 
 
@@ -1057,11 +1126,15 @@ class TreeView(Widget):
     """Scrollable tree view for arbitrary application objects.
 
     Args:
-        roots: Top-level application objects.
-        id: Optional callable returning a stable identity for a node. Stable IDs
-            preserve expansion state across object refreshes.
-        label: Optional callable returning display text for a node.
-        children: Optional callable returning a node's child list.
+        roots: Top-level application objects, or a zero-argument callable
+            returning the current top-level objects.
+        id: Optional attribute/key name or callable returning a stable identity
+            for a node. Stable IDs preserve expansion state across object
+            refreshes.
+        label: Optional attribute/key name or callable returning display text
+            for a node.
+        children: Optional attribute/key name or callable returning a node's
+            child list.
 
     The tree owns selection, scroll offset, and expanded node IDs. It handles
     arrow-key navigation plus ``enter``/``right`` to expand and ``left`` to
@@ -1072,15 +1145,15 @@ class TreeView(Widget):
 
     def __init__(
         self,
-        roots: list[Any],
-        id: Optional[Callable[[Any], Any]] = None,
-        label: Optional[Callable[[Any], str]] = None,
-        children: Optional[Callable[[Any], list[Any]]] = None,
+        roots: Union[list[Any], Callable[[], list[Any]]],
+        id: Optional[Accessor] = None,
+        label: Optional[Accessor] = None,
+        children: Optional[Accessor] = None,
     ) -> None:
         self.roots = roots
-        self.id: Callable[[Any], Any] = id or builtins_id
-        self.label: Callable[[Any], str] = label or str
-        self.children: Callable[[Any], list[Any]] = children or _empty_children
+        self.id: Callable[[Any], Any] = _accessor(id, builtins_id)
+        self.label: Callable[[Any], str] = _text_accessor(label, str)
+        self.children: Callable[[Any], list[Any]] = _children_accessor(children)
         self.expanded_ids: set[Any] = set()
         self.selected_index = 0
         self.scroll_offset = 0
@@ -1161,8 +1234,11 @@ class TreeView(Widget):
                 if node_id in self.expanded_ids:
                     visit(self.children(node), depth + 1, [*ancestors_last, is_last])
 
-        visit(self.roots, 0, [])
+        visit(self._roots(), 0, [])
         return rows
+
+    def _roots(self) -> list[Any]:
+        return self.roots() if callable(self.roots) else self.roots
 
     def _clamp(
         self,
@@ -1562,13 +1638,82 @@ def _allocate_column_widths(
     return _allocate_sizes(width, [column.width for column in columns], preferred)
 
 
-def _get_value(source: Any, name: str) -> Any:
+_MISSING = object()
+
+
+def _parse_path_expression(expression: str) -> list[tuple[str, Union[str, int]]]:
+    if expression == "":
+        return []
+    parts: list[tuple[str, Union[str, int]]] = []
+    for segment in expression.split("."):
+        if segment == "":
+            raise ValueError(f"Invalid path expression: {expression!r}")
+        cursor = 0
+        bracket = segment.find("[")
+        if bracket == -1:
+            parts.append(("field", segment))
+            continue
+        if bracket > 0:
+            parts.append(("field", segment[:bracket]))
+            cursor = bracket
+        while cursor < len(segment):
+            if segment[cursor] != "[":
+                raise ValueError(f"Invalid path expression: {expression!r}")
+            end = segment.find("]", cursor + 1)
+            if end == -1:
+                raise ValueError(f"Invalid path expression: {expression!r}")
+            raw_index = segment[cursor + 1 : end]
+            if not raw_index.isdigit():
+                raise ValueError(f"Invalid path expression: {expression!r}")
+            parts.append(("index", int(raw_index)))
+            cursor = end + 1
+    return parts
+
+
+def _get_value(source: Any, name: str, default: Any = "") -> Any:
     if source is None:
-        return ""
+        return default
     if isinstance(source, Mapping):
         mapping = cast(Mapping[str, Any], source)
-        return mapping.get(name, "")
-    return getattr(source, name, "")
+        return mapping.get(name, default)
+    return getattr(source, name, default)
+
+
+def _resolve_accessor(source: Any, accessor: Accessor, default: Any = "") -> Any:
+    if callable(accessor):
+        return accessor(source)
+    return _get_value(source, accessor, default)
+
+
+def _accessor(
+    accessor: Optional[Accessor],
+    default: Callable[[Any], Any],
+) -> Callable[[Any], Any]:
+    if accessor is None:
+        return default
+    return lambda source: _resolve_accessor(source, accessor)
+
+
+def _text_accessor(
+    accessor: Optional[Accessor],
+    default: Callable[[Any], Any],
+) -> Callable[[Any], str]:
+    if accessor is None:
+        return lambda source: str(default(source))
+    return lambda source: str(_resolve_accessor(source, accessor))
+
+
+def _children_accessor(accessor: Optional[Accessor]) -> Callable[[Any], list[Any]]:
+    if accessor is None:
+        return _empty_children
+
+    def children(source: Any) -> list[Any]:
+        value = _resolve_accessor(source, accessor, [])
+        if value is None:
+            return []
+        return list(value)
+
+    return children
 
 
 def _tree_prefix(depth: int, is_last: bool, ancestors_last: list[bool]) -> str:
@@ -2025,5 +2170,6 @@ __all__ = [
     "flush",
     "iter_clusters",
     "normalize_key",
+    "path",
     "terminal_size",
 ]

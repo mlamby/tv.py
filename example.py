@@ -62,14 +62,14 @@ def create_widgets(model: DashboardModel) -> DashboardWidgets:
             tv.Column("Status", "status", tv.Size.fixed(10), style=status_style),
             tv.Column(
                 "Rate/s",
-                lambda row: row.rate,
+                "rate",
                 tv.Size.flex(1),
                 "right",
                 format_float,
             ),
             tv.Column(
                 "Latency",
-                lambda row: row.latency_ms,
+                "latency_ms",
                 tv.Size.fixed(10),
                 "right",
                 format_ms,
@@ -79,9 +79,9 @@ def create_widgets(model: DashboardModel) -> DashboardWidgets:
     )
     tree = tv.TreeView(
         model.roots,
-        id=lambda node: node.path,
+        id="path",
         label=lambda node: f"{status_icon(node.status)} {node.name}",
-        children=lambda node: node.children,
+        children="children",
     )
     tree.expanded_ids.add("/svc")
     details = tv.PropertyGrid(
@@ -91,7 +91,7 @@ def create_widgets(model: DashboardModel) -> DashboardWidgets:
             tv.Property(
                 "Status",
                 "status",
-                style=lambda value: status_style_name(str(value)),
+                style=status_style_name,
             ),
             tv.Property("Rate/s", "rate", formatter=format_float),
             tv.Property("Latency", "latency_ms", formatter=format_ms),
