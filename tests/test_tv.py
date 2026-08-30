@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+import importlib
+import sys
+
 import pytest
 
 import tv
@@ -23,6 +26,7 @@ def test_public_api_is_exported_for_copyable_framework_use() -> None:
         "LogView",
         "Widget",
         "enable_emoji_support",
+        "path",
     ]:
         assert namespace[name] is getattr(tv, name)
 
@@ -43,11 +47,61 @@ def test_default_mode_keeps_dependency_free_unicode_measurement() -> None:
     assert tv.align_text("ok", 4, "right") == "  ok"
 
 
+def test_path_accessor_reads_nested_mapping_object_and_index_values() -> None:
+    class Status:
+        state = "ok"
+
+    source = {
+        "header": {"message_id": "nav-001"},
+        "sensors": [{"quality": {"hdop": 0.9}}],
+        "status": Status(),
+    }
+
+    assert tv.path("header.message_id")(source) == "nav-001"
+    assert tv.path("sensors[0].quality.hdop")(source) == 0.9
+    assert tv.path("status.state")(source) == "ok"
+
+
+def test_path_accessor_uses_default_and_transform() -> None:
+    source = {"navigation": {"speed_ms": 10.0}, "status": {"health": ""}}
+
+    knots = tv.path(
+        "navigation.speed_ms",
+        default=0.0,
+        transform=lambda value: float(value) * 1.943844,
+    )
+
+    assert knots(source) == pytest.approx(19.43844)
+    assert tv.path("missing.field", default="unknown")(source) == "unknown"
+    assert tv.path("navigation.speed_ms[0]", default="bad")(source) == "bad"
+    assert tv.path("status.health", default="unknown")(source) == ""
+
+
+def test_property_grid_styles_raw_values_before_formatting() -> None:
+    grid = tv.PropertyGrid(
+        {"health": "warning"},
+        [
+            tv.Property(
+                "Health",
+                "health",
+                formatter=lambda value: str(value).upper(),
+                style=lambda value: str(value),
+            )
+        ],
+    )
+    buffer = tv.ScreenBuffer(20, 1)
+
+    grid.render(tv.Painter(buffer), tv.RenderContext(20, 1, False, None))
+
+    assert buffer.line_text(0).rstrip() == "Health WARNING"
+    assert buffer._cells[0][7].style == "warning"
+
+
 def test_enable_emoji_support_reports_missing_optional_dependencies(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     tv.enable_emoji_support(False)
-    real_import_module = tv.importlib.import_module
+    real_import_module = importlib.import_module
 
     def missing_optional_dependency(name: str, package: object = None) -> object:
         del package
@@ -55,12 +109,12 @@ def test_enable_emoji_support_reports_missing_optional_dependencies(
             raise ImportError(name)
         return real_import_module(name)
 
-    monkeypatch.setattr(tv.importlib, "import_module", missing_optional_dependency)
+    monkeypatch.setattr(importlib, "import_module", missing_optional_dependency)
 
     with pytest.raises(RuntimeError, match="pip install regex wcwidth") as exc_info:
         tv.enable_emoji_support()
 
-    assert tv.sys.executable in str(exc_info.value)
+    assert sys.executable in str(exc_info.value)
     assert "this interpreter" in str(exc_info.value)
     assert tv.display_width("表") == 2
 
@@ -381,8 +435,32 @@ def test_data_table_selection_and_scrolling() -> None:
     assert table.selected_item == rows[4]
 
 
+def test_data_table_resolves_callable_rows_for_render_and_selection() -> None:
+    rows = [{"name": "alpha"}]
+    table = tv.DataTable([tv.Column("Name", "name")], lambda: rows)
+
+    buffer = tv.ScreenBuffer(12, 3)
+    table.render(tv.Painter(buffer), tv.RenderContext(12, 3, True, table))
+    assert "alpha" in buffer.line_text(1)
+    assert table.selected_item == rows[0]
+
+    rows[:] = [{"name": "beta"}, {"name": "gamma"}]
+    table.handle_key("end")
+    buffer = tv.ScreenBuffer(12, 3)
+    table.render(tv.Painter(buffer), tv.RenderContext(12, 3, True, table))
+
+    assert "beta" in buffer.line_text(1)
+    assert "gamma" in buffer.line_text(2)
+    assert table.selected_item == rows[1]
+
+
 def test_property_grid_static_and_callable_styles_use_raw_values() -> None:
     seen: list[object] = []
+
+    def record_seen(value: object) -> str:
+        seen.append(value)
+        return "ok"
+
     grid = tv.PropertyGrid(
         {"state": "warning", "count": 3},
         [
@@ -391,7 +469,7 @@ def test_property_grid_static_and_callable_styles_use_raw_values() -> None:
                 "Count",
                 "count",
                 formatter=lambda value: f"{value} items",
-                style=lambda value: seen.append(value) or "ok",
+                style=record_seen,
             ),
         ],
     )
@@ -489,6 +567,47 @@ def test_tree_view_expansion_and_navigation() -> None:
     tree.handle_key("up")
     tree.handle_key("left")
     assert "root" not in tree.expanded_ids
+
+
+def test_tree_view_accepts_field_accessors() -> None:
+    root = {
+        "id": "root",
+        "label": "root",
+        "children": [{"id": "child", "label": "child", "children": []}],
+    }
+    tree = tv.TreeView([root], id="id", label="label", children="children")
+
+    tree.handle_key("right")
+    tree.handle_key("down")
+
+    assert tree.selected_node["id"] == "child"
+
+
+def test_tree_view_resolves_callable_roots_for_render_and_selection() -> None:
+    roots = [
+        {
+            "id": "root",
+            "label": "root",
+            "children": [{"id": "child", "label": "child"}],
+        }
+    ]
+    tree = tv.TreeView(
+        lambda: roots,
+        id=lambda node: node["id"],
+        label=lambda node: node["label"],
+        children=lambda node: node.get("children", []),
+    )
+
+    tree.handle_key("right")
+    tree.handle_key("down")
+    assert tree.selected_node["id"] == "child"
+
+    roots[:] = [{"id": "next", "label": "next", "children": []}]
+    buffer = tv.ScreenBuffer(12, 2)
+    tree.render(tv.Painter(buffer), tv.RenderContext(12, 2, True, tree))
+
+    assert "next" in buffer.line_text(0)
+    assert tree.selected_node["id"] == "next"
 
 
 def test_tree_view_string_accessors_and_styles() -> None:

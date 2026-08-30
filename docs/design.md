@@ -61,8 +61,8 @@ Screens:
 * Support application-defined key bindings, for example:
 
 ```python
-app.bind("ctrl+1", lambda: app.show_screen("overview"))
-app.bind("ctrl+2", lambda: app.show_screen("health"))
+app.bind("alt+1", lambda: app.show_screen("overview"))
+app.bind("alt+2", lambda: app.show_screen("health"))
 ```
 
 Keyboard handling:
@@ -159,13 +159,14 @@ Built-in widgets for v1:
 * A column should support:
 
   * title,
-  * attribute name or accessor function,
+  * attribute/key name or accessor function,
   * fixed/auto/flexible width,
   * alignment,
   * optional formatter,
   * optional style accessor.
 * The table should support:
 
+  * concrete row lists or zero-argument row providers,
   * header row,
   * vertical scrolling,
   * zero or one selected row,
@@ -192,17 +193,20 @@ table = DataTable(
 
 * Displays arbitrary application objects as a tree.
 * Do not require application objects to inherit from framework classes.
+* Roots should accept concrete lists or zero-argument root providers.
 * Configure the tree with accessors:
 
 ```python
 tree = TreeView(
     roots=devices,
-    id=lambda node: node.path,
-    label=lambda node: node.name,
-    children=lambda node: node.children,
+    id="path",
+    label="name",
+    children="children",
 )
 ```
 
+* Accessors should accept attribute/key names or callables, matching
+  `DataTable` and `PropertyGrid`.
 * The `id` accessor should provide stable identity for preserving expanded/collapsed state.
 * Default identity may be Python object identity, but documentation should recommend stable IDs.
 * TreeView should own:
@@ -216,7 +220,9 @@ tree = TreeView(
 `PropertyGrid`:
 
 * Displays key/value properties for one object or a list of property descriptors.
-* Should support labels, values, alignment, optional formatting, and optional semantic style.
+* Should support labels, attribute/key names or accessor functions, alignment,
+  optional formatting, and optional semantic style.
+* Style accessors should receive the raw value before formatting.
 * Useful for showing details of a selected object.
 
 `LogView`:
@@ -320,13 +326,14 @@ Non-goals for v1:
 Deliverables:
 
 1. A single Python file containing the framework.
-2. A small example application in the same file under `if __name__ == "__main__":`.
+2. A small example application alongside the framework, runnable with
+   `python example.py`.
 3. The example should demonstrate:
 
    * alternate screen buffer,
    * manual application-owned loop,
    * two named screens,
-   * Ctrl-1 / Ctrl-2 screen switching,
+   * Alt-1 / Alt-2 screen switching,
    * layout with `VBox`, `HBox`, fixed and flexible sizes,
    * `Panel`,
    * `DataTable`,

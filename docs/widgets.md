@@ -157,9 +157,10 @@ table = DataTable(
 
 ### Data
 
-`rows` is a mutable list owned by the application. Rows may be dictionaries or
-objects. The application may mutate row objects, append rows, remove rows, or
-replace `table.rows` between renders.
+`rows` is a mutable list owned by the application, or a zero-argument callable
+returning the current list. Rows may be dictionaries or objects. The application
+may mutate row objects, append rows, remove rows, or replace `table.rows`
+between renders.
 
 Each `Column` describes one visible column:
 
@@ -223,8 +224,9 @@ tree = TreeView(
 
 ### Data
 
-`roots` is the top-level list of application nodes. It defaults to a new empty
-list when omitted. Nodes do not need to inherit from any framework class.
+`roots` is the top-level list of application nodes, or a zero-argument callable
+returning the current list. It defaults to a new empty list when omitted. Nodes
+do not need to inherit from any framework class.
 
 Accessors configure the tree:
 

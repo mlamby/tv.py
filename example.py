@@ -9,7 +9,13 @@ from typing import Any
 
 import tv
 
-tv.enable_emoji_support()
+try:
+    tv.enable_emoji_support()
+except RuntimeError:
+    # Optional emoji-aware measurement needs regex and wcwidth. Keep the demo
+    # runnable in dependency-free environments by using tv.py's built-in
+    # Unicode width approximation when those packages are not installed.
+    pass
 
 
 @dataclass
@@ -59,14 +65,14 @@ def create_widgets(model: DashboardModel) -> DashboardWidgets:
             tv.Column("Status", "status", tv.Size.fixed(10), style=status_style),
             tv.Column(
                 "Rate/s",
-                lambda row: row.rate,
+                "rate",
                 tv.Size.flex(1),
                 "right",
                 format_float,
             ),
             tv.Column(
                 "Latency",
-                lambda row: row.latency_ms,
+                "latency_ms",
                 tv.Size.fixed(10),
                 "right",
                 format_ms,
@@ -89,7 +95,7 @@ def create_widgets(model: DashboardModel) -> DashboardWidgets:
             tv.Property(
                 "Status",
                 "status",
-                style=lambda value: status_style_name(str(value)),
+                style=status_style_name,
             ),
             tv.Property("Rate/s", "rate", formatter=format_float),
             tv.Property("Latency", "latency_ms", formatter=format_ms),
