@@ -24,6 +24,10 @@ from typing import Any, Callable, Optional, TextIO, Union, cast
 
 __version__ = "0.1.0"
 
+Accessor = Union[str, Callable[[Any], Any]]
+Style = Union[str, Callable[[Any], str]]
+TextStyle = Union[str, Callable[[], str]]
+
 
 ESC = "\x1b"
 CSI = f"{ESC}["
@@ -797,11 +801,12 @@ class Text(Widget):
         text: A string or zero-argument callable returning the current text.
             Callables are evaluated each render, which is useful for status
             lines derived from live application state.
-        style: Symbolic style name used for every rendered line.
+        style: Symbolic style name or zero-argument callable returning the
+            current style for every rendered line.
     """
 
     def __init__(
-        self, text: Union[str, Callable[[], str]], style: str = "normal"
+        self, text: Union[str, Callable[[], Any]], style: TextStyle = "normal"
     ) -> None:
         self.text = text
         self.style = style
@@ -814,12 +819,16 @@ class Text(Widget):
 
     def render(self, painter: Painter, context: RenderContext) -> None:
         del context
+        style = self._style()
         for y, line in enumerate(self._lines()[: painter.height]):
-            painter.write(0, y, line, self.style, width=painter.width)
+            painter.write(0, y, line, style, width=painter.width)
 
     def _lines(self) -> list[str]:
         value = self.text() if callable(self.text) else self.text
         return str(value).splitlines() or [""]
+
+    def _style(self) -> str:
+        return self.style() if callable(self.style) else self.style
 
 
 @dataclass
@@ -831,15 +840,15 @@ class Property:
         value: Attribute/key name or callable used to read from the grid source.
         align: Alignment for the value column.
         formatter: Optional function that converts the raw value to text.
-        style: Style name or callable receiving the formatted/raw value and
-            returning a style name.
+        style: Style name or callable receiving the raw value and returning a
+            style name.
     """
 
     label: str
-    value: Union[str, Callable[[Any], Any]]
+    value: Accessor
     align: str = "left"
     formatter: Optional[Callable[[Any], str]] = None
-    style: Union[str, Callable[[Any], str]] = "normal"
+    style: Style = "normal"
 
 
 class PropertyGrid(Widget):
@@ -879,8 +888,9 @@ class PropertyGrid(Widget):
             )
         label_width = min(label_width, max(0, painter.width - 1))
         for y, prop in enumerate(self.properties[: painter.height]):
-            value = self._property_value(prop)
-            style = prop.style(value) if callable(prop.style) else prop.style
+            raw = _resolve_accessor(self.source, prop.value)
+            value = prop.formatter(raw) if prop.formatter else str(raw)
+            style = _resolve_style(prop.style, raw)
             painter.write(0, y, prop.label, "muted", width=label_width)
             if painter.width > label_width:
                 painter.write(label_width, y, " ", width=1)
@@ -894,16 +904,6 @@ class PropertyGrid(Widget):
                 align=prop.align,
             )
 
-    def _property_value(self, prop: Property) -> str:
-        raw = (
-            prop.value(self.source)
-            if callable(prop.value)
-            else _get_value(self.source, prop.value)
-        )
-        if prop.formatter:
-            return prop.formatter(raw)
-        return str(raw)
-
 
 @dataclass
 class Column:
@@ -915,29 +915,27 @@ class Column:
         width: :class:`Size` controlling the column width.
         align: Alignment for header and cell text.
         formatter: Optional function that converts the raw value to text.
-        style: Optional callable receiving the row object and returning a style
-            name for this column's cell.
+        style: Style name or callable receiving the row object and returning a
+            style name for this column's cell.
     """
 
     title: str
-    value: Union[str, Callable[[Any], Any]]
+    value: Accessor
     width: Size = Size.flex(1)
     align: str = "left"
     formatter: Optional[Callable[[Any], str]] = None
-    style: Optional[Callable[[Any], str]] = None
+    style: Style = "normal"
 
     def text_for(self, row: Any) -> str:
         """Return formatted display text for ``row``."""
-        raw = self.value(row) if callable(self.value) else _get_value(row, self.value)
+        raw = _resolve_accessor(row, self.value)
         if self.formatter:
             return self.formatter(raw)
         return str(raw)
 
     def style_for(self, row: Any) -> str:
         """Return the symbolic style name for ``row``."""
-        if self.style:
-            return self.style(row)
-        return "normal"
+        return _resolve_style(self.style, row)
 
 
 class DataTable(Widget):
@@ -1057,11 +1055,16 @@ class TreeView(Widget):
     """Scrollable tree view for arbitrary application objects.
 
     Args:
-        roots: Top-level application objects.
-        id: Optional callable returning a stable identity for a node. Stable IDs
-            preserve expansion state across object refreshes.
-        label: Optional callable returning display text for a node.
-        children: Optional callable returning a node's child list.
+        roots: Optional top-level application objects.
+        id: Optional attribute/key name or callable returning a stable identity
+            for a node. Stable IDs preserve expansion state across object
+            refreshes.
+        label: Optional attribute/key name or callable returning display text
+            for a node.
+        children: Optional attribute/key name or callable returning a node's
+            child list.
+        style: Style name or callable receiving a node and returning a style
+            name for unselected rows.
 
     The tree owns selection, scroll offset, and expanded node IDs. It handles
     arrow-key navigation plus ``enter``/``right`` to expand and ``left`` to
@@ -1072,15 +1075,17 @@ class TreeView(Widget):
 
     def __init__(
         self,
-        roots: list[Any],
-        id: Optional[Callable[[Any], Any]] = None,
-        label: Optional[Callable[[Any], str]] = None,
-        children: Optional[Callable[[Any], list[Any]]] = None,
+        roots: Optional[list[Any]] = None,
+        id: Optional[Accessor] = None,
+        label: Optional[Accessor] = None,
+        children: Optional[Accessor] = None,
+        style: Style = "normal",
     ) -> None:
-        self.roots = roots
-        self.id: Callable[[Any], Any] = id or builtins_id
-        self.label: Callable[[Any], str] = label or str
-        self.children: Callable[[Any], list[Any]] = children or _empty_children
+        self.roots = roots if roots is not None else []
+        self.id: Accessor = id or builtins_id
+        self.label: Accessor = label or str
+        self.children: Accessor = children or _empty_children
+        self.style = style
         self.expanded_ids: set[Any] = set()
         self.selected_index = 0
         self.scroll_offset = 0
@@ -1105,8 +1110,8 @@ class TreeView(Widget):
             if index >= len(visible):
                 break
             node, depth, is_last, ancestors_last = visible[index]
-            node_id = self.id(node)
-            kids = self.children(node)
+            node_id = self._id_for(node)
+            kids = self._children_for(node)
             marker = " "
             if kids:
                 marker = (
@@ -1118,12 +1123,12 @@ class TreeView(Widget):
             style = (
                 "selected"
                 if context.focused and index == self.selected_index
-                else "normal"
+                else self._style_for(node)
             )
             painter.write(
                 0,
                 screen_y,
-                f"{prefix}{marker} {self.label(node)}",
+                f"{prefix}{marker} {self._label_for(node)}",
                 style,
                 width=painter.width,
             )
@@ -1138,13 +1143,13 @@ class TreeView(Widget):
             return True
         if key in {"right", "enter"}:
             node = self.selected_node
-            if node is not None and self.children(node):
-                self.expanded_ids.add(self.id(node))
+            if node is not None and self._children_for(node):
+                self.expanded_ids.add(self._id_for(node))
                 return True
         if key == "left":
             node = self.selected_node
             if node is not None:
-                node_id = self.id(node)
+                node_id = self._id_for(node)
                 if node_id in self.expanded_ids:
                     self.expanded_ids.remove(node_id)
                     return True
@@ -1157,12 +1162,31 @@ class TreeView(Widget):
             for index, node in enumerate(nodes):
                 is_last = index == len(nodes) - 1
                 rows.append((node, depth, is_last, ancestors_last))
-                node_id = self.id(node)
+                node_id = self._id_for(node)
                 if node_id in self.expanded_ids:
-                    visit(self.children(node), depth + 1, [*ancestors_last, is_last])
+                    visit(
+                        self._children_for(node),
+                        depth + 1,
+                        [*ancestors_last, is_last],
+                    )
 
         visit(self.roots, 0, [])
         return rows
+
+    def _id_for(self, node: Any) -> Any:
+        return _resolve_accessor(node, self.id)
+
+    def _label_for(self, node: Any) -> str:
+        return str(_resolve_accessor(node, self.label))
+
+    def _children_for(self, node: Any) -> list[Any]:
+        children = _resolve_accessor(node, self.children)
+        if not children:
+            return []
+        return cast(list[Any], children)
+
+    def _style_for(self, node: Any) -> str:
+        return _resolve_style(self.style, node)
 
     def _clamp(
         self,
@@ -1187,8 +1211,10 @@ class LogView(Widget):
 
     Args:
         entries: Mutable list of log entry objects owned by the application.
-        text: Optional callable converting an entry to display text.
-        style: Optional callable returning a symbolic style name for an entry.
+        text: Optional attribute/key name or callable converting an entry to
+            display text.
+        style: Style name or callable returning a symbolic style name for an
+            entry.
 
     The view follows the end by default. Pressing ``up`` enters scrollback mode;
     pressing ``down`` to the bottom or ``end`` resumes following.
@@ -1199,8 +1225,8 @@ class LogView(Widget):
     def __init__(
         self,
         entries: Optional[list[Any]] = None,
-        text: Optional[Callable[[Any], str]] = None,
-        style: Optional[Callable[[Any], str]] = None,
+        text: Optional[Accessor] = None,
+        style: Style = "normal",
     ) -> None:
         self.entries = entries if entries is not None else []
         self.text = text or str
@@ -1224,8 +1250,9 @@ class LogView(Widget):
             if index >= len(self.entries):
                 break
             entry = self.entries[index]
-            style = self.style(entry) if self.style else "normal"
-            painter.write(0, screen_y, self.text(entry), style, width=painter.width)
+            style = _resolve_style(self.style, entry)
+            text = str(_resolve_accessor(entry, self.text))
+            painter.write(0, screen_y, text, style, width=painter.width)
 
     def handle_key(self, key: str) -> bool:
         if key == "up":
@@ -1569,6 +1596,18 @@ def _get_value(source: Any, name: str) -> Any:
         mapping = cast(Mapping[str, Any], source)
         return mapping.get(name, "")
     return getattr(source, name, "")
+
+
+def _resolve_accessor(source: Any, accessor: Accessor) -> Any:
+    if callable(accessor):
+        return accessor(source)
+    return _get_value(source, accessor)
+
+
+def _resolve_style(style: Style, source: Any) -> str:
+    if callable(style):
+        return style(source)
+    return style
 
 
 def _tree_prefix(depth: int, is_last: bool, ancestors_last: list[bool]) -> str:

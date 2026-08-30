@@ -26,6 +26,7 @@ Most widget APIs take semantic style names:
 
 ```python
 Text("waiting for telemetry", style="muted")
+Text(lambda: status_text(), style=lambda: current_status_style())
 
 Column(
     "Status",
@@ -37,6 +38,11 @@ Column(
 Prefer adding or reusing semantic names over scattering raw color choices
 through app code. That keeps dashboard logic readable and makes themes easy to
 change.
+
+Data widgets also accept style callables. `Property.style(raw_value)` receives
+the raw property value. `Column.style(row)`, `TreeView.style(node)`, and
+`LogView.style(entry)` receive their single input object. Focused selected rows
+in `DataTable` and `TreeView` still use `"selected"` over per-row styles.
 
 ## What The Numbers Mean
 
