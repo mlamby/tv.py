@@ -456,6 +456,11 @@ def test_data_table_resolves_callable_rows_for_render_and_selection() -> None:
 
 def test_property_grid_static_and_callable_styles_use_raw_values() -> None:
     seen: list[object] = []
+
+    def record_seen(value: object) -> str:
+        seen.append(value)
+        return "ok"
+
     grid = tv.PropertyGrid(
         {"state": "warning", "count": 3},
         [
@@ -464,7 +469,7 @@ def test_property_grid_static_and_callable_styles_use_raw_values() -> None:
                 "Count",
                 "count",
                 formatter=lambda value: f"{value} items",
-                style=lambda value: seen.append(value) or "ok",
+                style=record_seen,
             ),
         ],
     )

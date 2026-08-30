@@ -67,8 +67,6 @@ _emoji_support_enabled = False
 _emoji_findall: Optional[Callable[[str, str], list[str]]] = None
 _emoji_wcswidth: Optional[Callable[[str], int]] = None
 
-Accessor = Union[str, Callable[[Any], Any]]
-
 
 def enable_emoji_support(enabled: bool = True) -> None:
     """Enable or disable optional emoji-aware text measurement.

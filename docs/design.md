@@ -61,8 +61,8 @@ Screens:
 * Support application-defined key bindings, for example:
 
 ```python
-app.bind("ctrl+1", lambda: app.show_screen("overview"))
-app.bind("ctrl+2", lambda: app.show_screen("health"))
+app.bind("alt+1", lambda: app.show_screen("overview"))
+app.bind("alt+2", lambda: app.show_screen("health"))
 ```
 
 Keyboard handling:
@@ -326,13 +326,14 @@ Non-goals for v1:
 Deliverables:
 
 1. A single Python file containing the framework.
-2. A small example application in the same file under `if __name__ == "__main__":`.
+2. A small example application alongside the framework, runnable with
+   `python example.py`.
 3. The example should demonstrate:
 
    * alternate screen buffer,
    * manual application-owned loop,
    * two named screens,
-   * Ctrl-1 / Ctrl-2 screen switching,
+   * Alt-1 / Alt-2 screen switching,
    * layout with `VBox`, `HBox`, fixed and flexible sizes,
    * `Panel`,
    * `DataTable`,

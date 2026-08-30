@@ -9,7 +9,13 @@ from typing import Any
 
 import tv
 
-tv.enable_emoji_support()
+try:
+    tv.enable_emoji_support()
+except RuntimeError:
+    # Optional emoji-aware measurement needs regex and wcwidth. Keep the demo
+    # runnable in dependency-free environments by using tv.py's built-in
+    # Unicode width approximation when those packages are not installed.
+    pass
 
 
 @dataclass
