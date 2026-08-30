@@ -97,6 +97,21 @@ def test_property_grid_styles_raw_values_before_formatting() -> None:
     assert buffer._cells[0][7].style == "warning"
 
 
+def test_property_grid_resolves_callable_source_when_rendering() -> None:
+    source = {"name": "alpha"}
+    grid = tv.PropertyGrid(lambda: source, [tv.Property("Name", "name")])
+    buffer = tv.ScreenBuffer(20, 1)
+
+    grid.render(tv.Painter(buffer), tv.RenderContext(20, 1, False, None))
+    assert buffer.line_text(0).rstrip() == "Name alpha"
+
+    source = {"name": "bravo"}
+    buffer = tv.ScreenBuffer(20, 1)
+    grid.render(tv.Painter(buffer), tv.RenderContext(20, 1, False, None))
+
+    assert buffer.line_text(0).rstrip() == "Name bravo"
+
+
 def test_enable_emoji_support_reports_missing_optional_dependencies(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

@@ -107,8 +107,18 @@ details = PropertyGrid(
 
 ### Data
 
-The grid reads from `source`, which may be an object, dictionary, or `None`.
-Applications can replace `details.source` between renders:
+The grid reads from `source`, which may be an object, dictionary, `None`, or a
+zero-argument callable that returns one. Callable sources are resolved each
+time the grid renders:
+
+```python
+details = PropertyGrid(
+    source=lambda: table.selected_item,
+    properties=[Property("Status", "status")],
+)
+```
+
+Applications can also replace `details.source` between renders:
 
 ```python
 details.source = table.selected_item

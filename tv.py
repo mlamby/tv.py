@@ -916,8 +916,9 @@ class PropertyGrid(Widget):
     """Display key/value properties for one application object.
 
     Args:
-        source: Object or dictionary read by property descriptors. It may be
-            replaced by the application between renders.
+        source: Object or dictionary read by property descriptors, or a
+            zero-argument callable that returns one. It may be replaced by the
+            application between renders.
         properties: Ordered list of :class:`Property` descriptors.
         label_width: Optional fixed label column width. When omitted, the
             widest label determines the width.
@@ -941,6 +942,7 @@ class PropertyGrid(Widget):
 
     def render(self, painter: Painter, context: RenderContext) -> None:
         del context
+        source = self._source()
         label_width = self.label_width
         if label_width is None:
             label_width = max(
@@ -949,7 +951,7 @@ class PropertyGrid(Widget):
             )
         label_width = min(label_width, max(0, painter.width - 1))
         for y, prop in enumerate(self.properties[: painter.height]):
-            raw = _resolve_accessor(self.source, prop.value)
+            raw = _resolve_accessor(source, prop.value)
             value = prop.formatter(raw) if prop.formatter else str(raw)
             style = _resolve_style(prop.style, raw)
             painter.write(0, y, prop.label, "muted", width=label_width)
@@ -964,6 +966,10 @@ class PropertyGrid(Widget):
                 width=value_width,
                 align=prop.align,
             )
+
+    def _source(self) -> Any:
+        return self.source() if callable(self.source) else self.source
+
 
 @dataclass
 class Column:

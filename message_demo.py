@@ -97,6 +97,16 @@ class MessageWidgets:
     details: tv.PropertyGrid
 
 
+def optional_float(value: Any) -> Optional[float]:
+    return None if value is None else float(value)
+
+
+def optional_knots(value: Any) -> Optional[float]:
+    if value is None:
+        return None
+    return float(value) * KNOTS_PER_METER_PER_SECOND
+
+
 MESSAGE_ID = tv.path("header.message_id")
 HEALTH = tv.path("status.overall_health", default="unknown")
 SPEED_MS = tv.path("navigation.speed_ms", default=0.0, transform=float)
@@ -109,11 +119,15 @@ DETAIL_MESSAGE_ID = tv.path("message.header.message_id", default="multiple")
 DETAIL_SOURCE = tv.path("message.header.source", default="multiple")
 DETAIL_SCHEMA = tv.path("schema", default="multiple")
 DETAIL_HEALTH = tv.path("message.status.overall_health", default="mixed")
-DETAIL_SPEED_MS = tv.path("message.navigation.speed_ms", default=0.0, transform=float)
+DETAIL_SPEED_MS = tv.path(
+    "message.navigation.speed_ms",
+    default=None,
+    transform=optional_float,
+)
 DETAIL_SPEED_KNOTS = tv.path(
     "message.navigation.speed_ms",
-    default=0.0,
-    transform=lambda value: float(value) * KNOTS_PER_METER_PER_SECOND,
+    default=None,
+    transform=optional_knots,
 )
 
 
@@ -288,7 +302,7 @@ def create_widgets(state: MessageState) -> MessageWidgets:
     )
 
     details = tv.PropertyGrid(
-        details_source(state, tree),
+        lambda: details_source(state, tree),
         [
             tv.Property("Stream", "name"),
             tv.Property("Message", DETAIL_MESSAGE_ID),
@@ -331,7 +345,7 @@ def create_layout(app: tv.App, widgets: MessageWidgets) -> None:
                     right.panel(widgets.leaves, tv.Size.flex(1), title="Leaf Values")
                     right.panel(
                         widgets.details,
-                        tv.Size.fixed(12),
+                        tv.Size.fixed(14),
                         title="Message Details",
                     )
 
@@ -353,8 +367,6 @@ def run_main_loop(app: tv.App, state: MessageState, widgets: MessageWidgets) -> 
                 if now >= next_message_at[index]:
                     message.accept(generators[index](message.sequence + 1))
                     next_message_at[index] = now + message.interval_seconds
-
-            widgets.details.source = details_source(state, widgets.tree)
 
             key = app.poll_key()
             if key:
@@ -462,10 +474,14 @@ def format_age(value: Any) -> str:
 
 
 def format_speed_ms(value: Any) -> str:
+    if value is None:
+        return "n/a"
     return f"{float(value):.2f}"
 
 
 def format_knots(value: Any) -> str:
+    if value is None:
+        return "n/a"
     return f"{float(value):.2f}"
 
 

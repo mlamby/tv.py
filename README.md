@@ -106,9 +106,10 @@ application objects to widgets.
 for direct reads such as `"status"` or `"children"`, and use a callable when
 the display value is derived from more than one field.
 
-`DataTable.rows` and `TreeView.roots` may be concrete lists or zero-argument
-callables that return the current list. Callable sources are resolved when the
-widget renders, handles keys, or reports its selected item/node:
+`PropertyGrid.source`, `DataTable.rows`, and `TreeView.roots` may be concrete
+values or zero-argument callables that return the current value. Callable
+sources are resolved when the widget renders, handles keys, or reports its
+selected item/node:
 
 ```python
 latest_message = {}
@@ -123,6 +124,11 @@ tree = TreeView(
 table = DataTable(
     columns=[Column("Path", "path"), Column("Value", "value")],
     rows=lambda: leaf_fields_under(tree.selected_node),
+)
+
+details = PropertyGrid(
+    source=lambda: selected_message(tree.selected_node),
+    properties=[Property("Health", path("message.status.overall_health"))],
 )
 ```
 
