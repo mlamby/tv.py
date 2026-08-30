@@ -35,8 +35,8 @@ measurement can use `regex` and `wcwidth`.
 from tv import App, Column, DataTable, LogView, Panel, Size, Text, VBox
 
 devices = [
-    {"name": "api-1", "status": "ok", "rate": 420.0},
-    {"name": "api-2", "status": "warning", "rate": 370.0},
+    {"name": "api-1", "status": "ok", "tier": "edge", "rate": 420.0},
+    {"name": "api-2", "status": "warning", "tier": "core", "rate": 370.0},
 ]
 logs = ["dashboard started"]
 
@@ -44,6 +44,7 @@ table = DataTable(
     columns=[
         Column("Name", "name", width=Size.auto()),
         Column("Status", "status", width=Size.fixed(10)),
+        Column("Tier", "tier", width=Size.fixed(8), style="muted"),
         Column("Rate", "rate", width=Size.flex(1), align="right"),
     ],
     rows=devices,
