@@ -746,6 +746,8 @@ def test_screen_switch_bindings_use_alt_numbers() -> None:
 def test_csi_key_sequence_parsing() -> None:
     assert tv._parse_csi_sequence("A") == "up"
     assert tv._parse_csi_sequence("B") == "down"
+    assert tv._parse_csi_sequence("5~") == "pageup"
+    assert tv._parse_csi_sequence("6~") == "pagedown"
     assert tv._parse_csi_sequence("Z") == "shift+tab"
     assert tv._parse_csi_sequence("1;3A") == "alt+up"
 
@@ -756,6 +758,8 @@ def test_windows_key_name_preserves_alt_modifier() -> None:
     assert tv._windows_key_name("Q", ord("Q"), 0) == "q"
     assert tv._windows_key_name("", 0x09, 0x0010) == "shift+tab"
     assert tv._windows_key_name("", 0x28, 0) == "down"
+    assert tv._windows_key_name("", 0x21, 0) == "pageup"
+    assert tv._windows_key_name("", 0x22, 0) == "pagedown"
 
 
 def test_data_table_selection_and_scrolling() -> None:
@@ -768,6 +772,24 @@ def test_data_table_selection_and_scrolling() -> None:
     assert table.selected_index == 4
     assert table.scroll_offset == 3
     assert table.selected_item == rows[4]
+
+
+def test_data_table_page_navigation_uses_visible_body_height() -> None:
+    rows = [{"name": f"row-{index}"} for index in range(10)]
+    table = tv.DataTable([tv.Column("Name", "name")], rows)
+    buffer = tv.ScreenBuffer(10, 4)
+    table.render(tv.Painter(buffer), tv.RenderContext(10, 4, True, table))
+
+    table.handle_key("pagedown")
+    table.render(tv.Painter(buffer), tv.RenderContext(10, 4, True, table))
+    assert table.selected_index == 3
+    assert table.scroll_offset == 1
+
+    table.handle_key("pagedown")
+    table.handle_key("pageup")
+    table.render(tv.Painter(buffer), tv.RenderContext(10, 4, True, table))
+    assert table.selected_index == 3
+    assert table.scroll_offset == 1
 
 
 def test_data_table_resolves_callable_rows_for_render_and_selection() -> None:
@@ -904,6 +926,75 @@ def test_tree_view_expansion_and_navigation() -> None:
     assert "root" not in tree.expanded_ids
 
 
+def test_tree_view_page_home_and_end_navigation() -> None:
+    roots = [{"id": str(index), "label": f"node-{index}"} for index in range(10)]
+    tree = tv.TreeView(roots, id="id", label="label")
+    buffer = tv.ScreenBuffer(12, 4)
+    tree.render(tv.Painter(buffer), tv.RenderContext(12, 4, True, tree))
+
+    tree.handle_key("pagedown")
+    assert tree.selected_node["id"] == "4"
+
+    tree.handle_key("end")
+    assert tree.selected_node["id"] == "9"
+
+    tree.handle_key("pageup")
+    assert tree.selected_node["id"] == "5"
+
+    tree.handle_key("home")
+    assert tree.selected_node["id"] == "0"
+    assert tree.scroll_offset == 0
+
+
+def test_tree_view_left_collapses_parent_from_leaf_or_collapsed_child() -> None:
+    root = {
+        "id": "root",
+        "label": "root",
+        "children": [
+            {
+                "id": "child",
+                "label": "child",
+                "children": [{"id": "grandchild", "label": "grandchild"}],
+            }
+        ],
+    }
+    tree = tv.TreeView([root], id="id", label="label", children="children")
+    tree.handle_key("right")
+    tree.handle_key("down")
+    tree.handle_key("right")
+    tree.handle_key("down")
+    assert tree.selected_node["id"] == "grandchild"
+
+    tree.handle_key("left")
+    assert "child" not in tree.expanded_ids
+    assert "root" in tree.expanded_ids
+    assert tree.selected_node["id"] == "child"
+
+    tree.handle_key("left")
+    assert "root" not in tree.expanded_ids
+    assert tree.selected_node["id"] == "root"
+
+
+def test_tree_view_right_enters_expanded_node_and_enter_toggles() -> None:
+    root = {
+        "id": "root",
+        "label": "root",
+        "children": [{"id": "child", "label": "child"}],
+    }
+    tree = tv.TreeView([root], id="id", label="label", children="children")
+
+    assert tree.handle_key("enter")
+    assert "root" in tree.expanded_ids
+
+    assert tree.handle_key("right")
+    assert tree.selected_node["id"] == "child"
+
+    tree.handle_key("up")
+    assert tree.selected_node["id"] == "root"
+    assert tree.handle_key("enter")
+    assert "root" not in tree.expanded_ids
+
+
 def test_tree_view_accepts_field_accessors() -> None:
     root = {
         "id": "root",
@@ -1009,6 +1100,30 @@ def test_log_view_follow_and_scrollback() -> None:
     view.render(tv.Painter(buffer), tv.RenderContext(10, 2, True, view))
     assert view.follow
     assert view.scroll_offset == 2
+
+
+def test_log_view_page_navigation() -> None:
+    logs = [f"line-{index}" for index in range(10)]
+    view = tv.LogView(logs)
+    buffer = tv.ScreenBuffer(10, 3)
+    view.render(tv.Painter(buffer), tv.RenderContext(10, 3, True, view))
+    assert view.follow
+    assert view.scroll_offset == 7
+
+    view.handle_key("pageup")
+    assert not view.follow
+    assert view.scroll_offset == 4
+
+    view.handle_key("pageup")
+    assert view.scroll_offset == 1
+
+    view.handle_key("pagedown")
+    assert not view.follow
+    assert view.scroll_offset == 4
+
+    view.handle_key("pagedown")
+    assert view.follow
+    assert view.scroll_offset == 7
 
 
 def test_log_view_string_text_accessor_and_styles() -> None:

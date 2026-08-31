@@ -1115,7 +1115,7 @@ class DataTable(Widget):
             selection.
 
     The table owns selection and scroll state. It handles ``up``, ``down``,
-    ``home``, and ``end`` keys when focused.
+    ``pageup``, ``pagedown``, ``home``, and ``end`` keys when focused.
     """
 
     focusable = True
@@ -1130,6 +1130,7 @@ class DataTable(Widget):
         self.rows = rows if rows is not None else []
         self.selected_index = selected_index
         self.scroll_offset = 0
+        self._last_visible_height = 1
 
     @property
     def selected_item(self) -> Any:
@@ -1152,6 +1153,7 @@ class DataTable(Widget):
             painter.write(x, 0, column.title, "title", width=width, align=column.align)
             x += width
         visible_height = max(0, painter.height - 1)
+        self._last_visible_height = visible_height
         self._clamp_selection(rows)
         self._ensure_selection_visible(visible_height, rows)
         for screen_y in range(visible_height):
@@ -1184,6 +1186,12 @@ class DataTable(Widget):
             return True
         if key == "down":
             self._move_selection(1, rows)
+            return True
+        if key == "pageup":
+            self._move_selection(-self._page_size(), rows)
+            return True
+        if key == "pagedown":
+            self._move_selection(self._page_size(), rows)
             return True
         if key == "home":
             self.selected_index = 0 if rows else None
@@ -1223,6 +1231,9 @@ class DataTable(Widget):
             len(rows),
         )
 
+    def _page_size(self) -> int:
+        return max(1, self._last_visible_height)
+
 
 class TreeView(Widget):
     """Scrollable tree view for arbitrary application objects.
@@ -1241,8 +1252,9 @@ class TreeView(Widget):
             name for unselected rows.
 
     The tree owns selection, scroll offset, and expanded node IDs. It handles
-    arrow-key navigation plus ``enter``/``right`` to expand and ``left`` to
-    collapse.
+    arrow-key navigation, ``pageup``/``pagedown``, ``home``/``end``, plus
+    ``right`` to expand or enter children, ``enter`` to toggle expansion, and
+    ``left`` to collapse.
     """
 
     focusable = True
@@ -1263,6 +1275,7 @@ class TreeView(Widget):
         self.expanded_ids: set[Any] = set()
         self.selected_index = 0
         self.scroll_offset = 0
+        self._last_visible_height = 1
 
     @property
     def selected_node(self) -> Any:
@@ -1278,6 +1291,7 @@ class TreeView(Widget):
 
     def render(self, painter: Painter, context: RenderContext) -> None:
         visible = self._visible_nodes()
+        self._last_visible_height = painter.height
         self._clamp(visible, painter.height)
         for screen_y in range(painter.height):
             index = self.scroll_offset + screen_y
@@ -1315,10 +1329,45 @@ class TreeView(Widget):
         if key == "down":
             self.selected_index = _clamp_index(self.selected_index + 1, len(visible))
             return True
-        if key in {"right", "enter"}:
+        if key == "pageup":
+            self.selected_index = _clamp_index(
+                self.selected_index - self._page_size(),
+                len(visible),
+            )
+            return True
+        if key == "pagedown":
+            self.selected_index = _clamp_index(
+                self.selected_index + self._page_size(),
+                len(visible),
+            )
+            return True
+        if key == "home":
+            self.selected_index = 0
+            self.scroll_offset = 0
+            return True
+        if key == "end":
+            self.selected_index = _clamp_index(len(visible) - 1, len(visible))
+            return True
+        if key == "right":
             node = self.selected_node
             if node is not None and self._children_for(node):
-                self.expanded_ids.add(self._id_for(node))
+                node_id = self._id_for(node)
+                if node_id in self.expanded_ids:
+                    child_index = self._first_child_index(visible, self.selected_index)
+                    if child_index is not None:
+                        self.selected_index = child_index
+                        return True
+                else:
+                    self.expanded_ids.add(node_id)
+                    return True
+        if key == "enter":
+            node = self.selected_node
+            if node is not None and self._children_for(node):
+                node_id = self._id_for(node)
+                if node_id in self.expanded_ids:
+                    self.expanded_ids.remove(node_id)
+                else:
+                    self.expanded_ids.add(node_id)
                 return True
         if key == "left":
             node = self.selected_node
@@ -1326,6 +1375,12 @@ class TreeView(Widget):
                 node_id = self._id_for(node)
                 if node_id in self.expanded_ids:
                     self.expanded_ids.remove(node_id)
+                    return True
+                parent_index = self._parent_index(visible, self.selected_index)
+                if parent_index is not None:
+                    parent = visible[parent_index][0]
+                    self.expanded_ids.discard(self._id_for(parent))
+                    self.selected_index = parent_index
                     return True
         return False
 
@@ -1365,6 +1420,36 @@ class TreeView(Widget):
     def _style_for(self, node: Any) -> str:
         return _resolve_style(self.style, node)
 
+    def _parent_index(
+        self,
+        visible: list[tuple[Any, int, bool, list[bool]]],
+        index: int,
+    ) -> Optional[int]:
+        if not 0 <= index < len(visible):
+            return None
+        depth = visible[index][1]
+        if depth <= 0:
+            return None
+        for candidate in range(index - 1, -1, -1):
+            if visible[candidate][1] == depth - 1:
+                return candidate
+        return None
+
+    def _first_child_index(
+        self,
+        visible: list[tuple[Any, int, bool, list[bool]]],
+        index: int,
+    ) -> Optional[int]:
+        if not 0 <= index < len(visible) - 1:
+            return None
+        depth = visible[index][1]
+        if visible[index + 1][1] == depth + 1:
+            return index + 1
+        return None
+
+    def _page_size(self) -> int:
+        return max(1, self._last_visible_height)
+
     def _clamp(
         self,
         visible: list[tuple[Any, int, bool, list[bool]]],
@@ -1393,8 +1478,9 @@ class LogView(Widget):
         style: Style name or callable returning a symbolic style name for an
             entry.
 
-    The view follows the end by default. Pressing ``up`` enters scrollback mode;
-    pressing ``down`` to the bottom or ``end`` resumes following.
+    The view follows the end by default. Pressing ``up`` or ``pageup`` enters
+    scrollback mode; pressing ``down`` or ``pagedown`` to the bottom or ``end``
+    resumes following.
     """
 
     focusable = True
@@ -1438,10 +1524,15 @@ class LogView(Widget):
             return True
         if key == "down":
             self.scroll_offset += 1
-            max_offset = max(0, len(self.entries) - max(1, self._last_height))
-            if self.scroll_offset >= max_offset:
-                self.scroll_offset = max_offset
-                self.follow = True
+            self._resume_follow_at_bottom()
+            return True
+        if key == "pageup":
+            self.follow = False
+            self.scroll_offset = max(0, self.scroll_offset - self._page_size())
+            return True
+        if key == "pagedown":
+            self.scroll_offset += self._page_size()
+            self._resume_follow_at_bottom()
             return True
         if key == "end":
             self.follow = True
@@ -1451,6 +1542,15 @@ class LogView(Widget):
             self.scroll_offset = 0
             return True
         return False
+
+    def _resume_follow_at_bottom(self) -> None:
+        max_offset = max(0, len(self.entries) - max(1, self._last_height))
+        if self.scroll_offset >= max_offset:
+            self.scroll_offset = max_offset
+            self.follow = True
+
+    def _page_size(self) -> int:
+        return max(1, self._last_height)
 
 
 class App:
@@ -2323,6 +2423,10 @@ def _parse_tilde_csi(body: str) -> str:
         return "home"
     if body == "4":
         return "end"
+    if body == "5":
+        return "pageup"
+    if body == "6":
+        return "pagedown"
     return "escape"
 
 
@@ -2372,6 +2476,8 @@ def _poll_key_windows() -> Optional[str]:
                 "M": "right",
                 "G": "home",
                 "O": "end",
+                "I": "pageup",
+                "Q": "pagedown",
             }.get(code, "escape")
             return key
         return char
