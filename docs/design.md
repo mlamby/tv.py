@@ -136,11 +136,12 @@ Design principle:
 Built-in widgets for v1:
 
 1. `Text`
-2. `PropertyGrid`
-3. `DataTable`
-4. `TreeView`
-5. `LogView`
-6. `Panel`
+2. `StatusLine`
+3. `PropertyGrid`
+4. `DataTable`
+5. `TreeView`
+6. `LogView`
+7. `Panel`
 
 `Panel`:
 
@@ -239,7 +240,14 @@ tree = TreeView(
 `Text`:
 
 * Displays one or more lines of text.
-* Useful for instructions, status lines, headings, and static messages.
+* Useful for instructions, headings, and static messages.
+* Usually not focusable.
+
+`StatusLine`:
+
+* Displays one row of labeled status segments.
+* Uses fixed, auto, or flexible segment widths.
+* Keeps neighboring segments stable as live values change length.
 * Usually not focusable.
 
 Rendering API:

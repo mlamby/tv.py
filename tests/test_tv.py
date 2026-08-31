@@ -19,6 +19,8 @@ def test_public_api_is_exported_for_copyable_framework_use() -> None:
         "HBox",
         "Panel",
         "Text",
+        "StatusItem",
+        "StatusLine",
         "PathMatch",
         "Property",
         "PropertyPattern",
@@ -684,6 +686,72 @@ def test_text_accepts_static_and_dynamic_styles() -> None:
     assert buffer._cells[0][0].style == "warning"
     assert buffer.line_text(1).startswith("error")
     assert buffer._cells[1][0].style == "error"
+
+
+def test_status_line_fixed_width_items_keep_separators_stable() -> None:
+    value = {"count": 9}
+    status = tv.StatusLine(
+        [
+            tv.StatusItem("Count", lambda: value["count"], tv.Size.fixed(8)),
+            tv.StatusItem("State", "ok", tv.Size.fixed(8)),
+        ]
+    )
+    buffer = tv.ScreenBuffer(20, 1)
+
+    status.render(tv.Painter(buffer), tv.RenderContext(20, 1))
+    assert buffer.line_text(0) == "Count 9  | State ok "
+    separator_x = buffer.line_text(0).index("|")
+
+    value["count"] = 1234
+    status.render(tv.Painter(buffer), tv.RenderContext(20, 1))
+    assert buffer.line_text(0) == "Count 12 | State ok "
+    assert buffer.line_text(0).index("|") == separator_x
+
+
+def test_status_line_formatting_alignment_flex_and_styles() -> None:
+    status = tv.StatusLine(
+        [
+            tv.StatusItem(
+                "Rate",
+                12.25,
+                tv.Size.fixed(12),
+                align="right",
+                formatter=lambda value: f"{value:.1f}/s",
+                style="ok",
+            ),
+            tv.StatusItem("Help", "tab", tv.Size.flex(1), style=lambda: "muted"),
+        ],
+        style="title",
+    )
+    buffer = tv.ScreenBuffer(24, 1)
+
+    status.render(tv.Painter(buffer), tv.RenderContext(24, 1))
+
+    assert buffer.line_text(0) == " Rate 12.2/s | Help tab "
+    assert buffer._cells[0][0].style == "ok"
+    assert buffer._cells[0][14].style == "title"
+    assert buffer._cells[0][16].style == "muted"
+
+
+def test_status_line_empty_label_renders_value_only() -> None:
+    status = tv.StatusLine([tv.StatusItem("", "Tab focus | q exits")])
+    buffer = tv.ScreenBuffer(20, 1)
+
+    status.render(tv.Painter(buffer), tv.RenderContext(20, 1))
+
+    assert buffer.line_text(0).startswith("Tab focus | q exits")
+
+
+def test_status_line_preferred_size_respects_fixed_widths() -> None:
+    status = tv.StatusLine(
+        [
+            tv.StatusItem("A", "1", tv.Size.fixed(8)),
+            tv.StatusItem("B", "2", tv.Size.auto()),
+        ]
+    )
+
+    assert status.preferred_size("vertical") == 1
+    assert status.preferred_size("horizontal") == 14
 
 
 def test_screen_switching_preserves_widget_state() -> None:

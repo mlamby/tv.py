@@ -28,6 +28,7 @@ __version__ = "0.1.0"
 Accessor = Union[str, Callable[[Any], Any]]
 Style = Union[str, Callable[[Any], str]]
 TextStyle = Union[str, Callable[[], str]]
+StatusValue = Union[Any, Callable[[], Any]]
 PropertySpec = Union["Property", "PropertyPattern"]
 PropertyPatternFormatter = Callable[["PathMatch"], str]
 PropertyPatternStyle = Union[str, Callable[["PathMatch"], str]]
@@ -833,6 +834,117 @@ class Text(Widget):
 
     def _style(self) -> str:
         return self.style() if callable(self.style) else self.style
+
+
+@dataclass
+class StatusItem:
+    """Descriptor for one segment in a :class:`StatusLine`.
+
+    Args:
+        label: Static label text rendered before the value.
+        value: Constant value or zero-argument callable resolved each render.
+        width: Segment width. Fixed widths keep neighboring segments stable.
+        align: Alignment for the segment text.
+        formatter: Optional function that converts the raw value to text.
+        style: Segment style name or zero-argument callable returning one.
+    """
+
+    label: str
+    value: StatusValue = ""
+    width: Size = Size.auto()
+    align: str = "left"
+    formatter: Optional[Callable[[Any], str]] = None
+    style: TextStyle = "normal"
+
+    def text(self) -> str:
+        """Return the formatted segment text."""
+        raw = self.value() if callable(self.value) else self.value
+        value = self.formatter(raw) if self.formatter else str(raw)
+        if self.label and value:
+            return f"{self.label} {value}"
+        if self.label:
+            return self.label
+        return value
+
+    def style_name(self) -> str:
+        """Return the symbolic style name for this segment."""
+        return self.style() if callable(self.style) else self.style
+
+
+class StatusLine(Widget):
+    """Single-line status widget with stable-width labeled segments.
+
+    Args:
+        items: Ordered :class:`StatusItem` descriptors.
+        separator: Text rendered between segments.
+        style: Style name or zero-argument callable used for separators.
+
+    ``StatusLine`` is useful for dashboard banners whose values change
+    frequently. Fixed-width items prevent later segments from shifting when a
+    value changes length.
+    """
+
+    def __init__(
+        self,
+        items: list[StatusItem],
+        separator: str = " | ",
+        style: TextStyle = "normal",
+    ) -> None:
+        self.items = items
+        self.separator = separator
+        self.style = style
+
+    def preferred_size(self, axis: str) -> int:
+        if axis == "vertical":
+            return 1
+        return sum(self._preferred_item_width(item) for item in self.items) + (
+            max(0, len(self.items) - 1) * display_width(self.separator)
+        )
+
+    def render(self, painter: Painter, context: RenderContext) -> None:
+        del context
+        if painter.height <= 0 or painter.width <= 0:
+            return
+        separator_width = display_width(self.separator)
+        total_separator_width = max(0, len(self.items) - 1) * separator_width
+        item_widths = _allocate_sizes(
+            max(0, painter.width - total_separator_width),
+            [item.width for item in self.items],
+            [self._preferred_item_width(item) for item in self.items],
+        )
+        x = 0
+        separator_style = self._style()
+        for index, (item, width) in enumerate(zip(self.items, item_widths)):
+            if width > 0:
+                painter.write(
+                    x,
+                    0,
+                    item.text(),
+                    item.style_name(),
+                    width=width,
+                    align=item.align,
+                )
+                x += width
+            if index < len(self.items) - 1 and separator_width > 0:
+                remaining = max(0, painter.width - x)
+                if remaining <= 0:
+                    break
+                painter.write(
+                    x,
+                    0,
+                    self.separator,
+                    separator_style,
+                    width=min(separator_width, remaining),
+                )
+                x += separator_width
+
+    def _style(self) -> str:
+        return self.style() if callable(self.style) else self.style
+
+    def _preferred_item_width(self, item: StatusItem) -> int:
+        if item.width.kind == "fixed":
+            return item.width.value
+        return max(1, display_width(item.text()))
 
 
 class PathAccessor:
@@ -2748,6 +2860,8 @@ __all__ = [
     "RenderContext",
     "ScreenBuffer",
     "Size",
+    "StatusItem",
+    "StatusLine",
     "TerminalSession",
     "Text",
     "TreeView",
