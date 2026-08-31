@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import ctypes
+import enum
 import importlib
 import sys
 
@@ -211,6 +212,37 @@ def test_match_paths_supports_object_attributes_globs_and_indexes() -> None:
 
     assert [match.path for match in status_matches] == ["payload.health.api_status"]
     assert [match.value for match in sensor_matches] == ["ok", "error"]
+
+
+def test_match_paths_treats_python_enums_as_leaf_values() -> None:
+    class Health(enum.Enum):
+        OK = 0
+        WARNING = 1
+
+    source = {"payload": {"health": {"api_status": Health.OK}}}
+
+    matches = tv.match_paths(source, "payload.health.*_status")
+    recursive = tv.match_paths(source, "payload.health.**")
+    enum_children = tv.iter_path_children(Health.OK)
+
+    assert [
+        (match.path, match.name, match.type_name, match.value) for match in matches
+    ] == [("payload.health.api_status", "api_status", "Health", Health.OK)]
+    assert [match.path for match in recursive] == ["payload.health.api_status"]
+    assert enum_children == []
+
+
+def test_message_demo_formats_python_enums_by_name() -> None:
+    import message_demo
+
+    class Health(enum.Enum):
+        OK = 0
+        WARNING = 1
+        ERROR = 2
+
+    assert message_demo.health_name(Health.OK) == "ok"
+    assert message_demo.health_style(Health.WARNING) == "warning"
+    assert message_demo.format_value(Health.ERROR) == "ERROR"
 
 
 def test_match_paths_supports_ctypes_structures_and_arrays() -> None:

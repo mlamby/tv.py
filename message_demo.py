@@ -8,6 +8,7 @@ models from them, point widgets at the new data, then render.
 from __future__ import annotations
 
 import ctypes
+import enum
 import random
 import time
 from collections.abc import Iterable, Iterator, Mapping
@@ -151,6 +152,8 @@ class SensorPayload(ctypes.Structure):
 
 
 def health_name(value: Any) -> str:
+    if isinstance(value, enum.Enum):
+        return value.name.lower()
     if isinstance(value, str):
         return value
     if value == HEALTH_OK:
@@ -213,11 +216,11 @@ class ReceivedMessage(Generic[PayloadT]):
 
     @property
     def message_id(self) -> str:
-        return self.payload.header.message_id
+        return str(self.payload.header.message_id)
 
     @property
     def source(self) -> str:
-        return self.payload.header.source
+        return str(self.payload.header.source)
 
 
 @dataclass
@@ -228,7 +231,12 @@ class MessageCollection:
     sensors: ReceivedMessage[SensorPayload]
 
     def __post_init__(self) -> None:
-        self._ordered = [self.navigation, self.power, self.compute, self.sensors]
+        self._ordered: list[ReceivedMessage[Any]] = [
+            self.navigation,
+            self.power,
+            self.compute,
+            self.sensors,
+        ]
         names = {message.name for message in self._ordered}
         if names != {"navigation", "power", "compute", "sensors"}:
             raise ValueError("message names must match collection field names")
@@ -625,6 +633,8 @@ def count_nodes(nodes: list[FieldNode]) -> int:
 
 
 def format_value(value: Any) -> str:
+    if isinstance(value, enum.Enum):
+        return value.name
     if isinstance(value, float):
         return f"{value:.3f}"
     return str(value)

@@ -244,6 +244,10 @@ leaves = DataTable(
 and `value` attributes. It returns leaf values by default; pass
 `leaves_only=False` to include matched containers and intermediate objects.
 Pass `prefix=...` to mount returned paths under a display path.
+Python `Enum` instances are treated as leaf values, so status enums match
+field-name globs such as `*_status` without expanding into `.name` and
+`.value`. Formatter and style callbacks still receive the enum object as
+`PathMatch.value`.
 
 Use `iter_path_children(source, prefix=...)` when an application needs only
 immediate child fields, for example to build a `TreeView` view model with the
