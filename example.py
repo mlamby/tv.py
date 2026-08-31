@@ -38,7 +38,7 @@ class DashboardWidgets:
     tree: tv.TreeView
     details: tv.PropertyGrid
     log_view: tv.LogView
-    banner: tv.Text
+    banner: tv.StatusLine
 
 
 def create_data_model() -> DashboardModel:
@@ -135,13 +135,33 @@ def create_widgets(model: DashboardModel) -> DashboardWidgets:
         model.logs,
         style=lambda line: "warning" if "warning" in line else "normal",
     )
-    banner = tv.Text(
-        lambda: "Tab focus | Alt-1 overview | Alt-2 health | q exits",
-        lambda: (
-            "warning"
-            if any(device.status != "ok" for device in model.devices)
-            else "muted"
-        ),
+    banner = tv.StatusLine(
+        [
+            tv.StatusItem(
+                "Devices",
+                lambda: len(model.devices),
+                tv.Size.fixed(10),
+                align="right",
+            ),
+            tv.StatusItem(
+                "Degraded",
+                lambda: sum(device.status != "ok" for device in model.devices),
+                tv.Size.fixed(10),
+                align="right",
+                style=lambda: (
+                    "warning"
+                    if any(device.status != "ok" for device in model.devices)
+                    else "ok"
+                ),
+            ),
+            tv.StatusItem(
+                "",
+                "Tab focus | Alt-1 overview | Alt-2 health | q exits",
+                tv.Size.flex(1),
+                style="muted",
+            ),
+        ],
+        style="muted",
     )
     return DashboardWidgets(table, tree, details, log_view, banner)
 

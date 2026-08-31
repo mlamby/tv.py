@@ -17,8 +17,8 @@ status screens, tables, trees, property views, and logs.
   `Size.auto`.
 - Multiple named screens with preserved widget state.
 - Focus traversal and light keyboard handling.
-- Built-in widgets: `Text`, `PropertyGrid`, `DataTable`, `TreeView`,
-  `LogView`, and `Panel`.
+- Built-in widgets: `Text`, `StatusLine`, `PropertyGrid`, `DataTable`,
+  `TreeView`, `LogView`, and `Panel`.
 
 ## Requirements
 
@@ -32,7 +32,7 @@ measurement can use `regex` and `wcwidth`.
 ## Quick Start
 
 ```python
-from tv import App, Column, DataTable, LogView, Panel, Size, Text, VBox
+from tv import App, Column, DataTable, LogView, Panel, Size, StatusItem, StatusLine, VBox
 
 devices = [
     {"name": "api-1", "status": "ok", "tier": "edge", "rate": 420.0},
@@ -50,8 +50,16 @@ table = DataTable(
     rows=devices,
 )
 
+status = StatusLine(
+    [
+        StatusItem("Devices", lambda: len(devices), width=Size.fixed(12), align="right"),
+        StatusItem("", "Tab changes focus | q exits", width=Size.flex(1), style="muted"),
+    ],
+    style="muted",
+)
+
 root = VBox()
-root.add(Panel(Text("Tab changes focus | q exits"), title="Status"), Size.fixed(3))
+root.add(Panel(status, title="Status"), Size.fixed(3))
 root.add(Panel(table, title="Devices"), Size.flex(1))
 root.add(Panel(LogView(logs), title="Log"), Size.fixed(8))
 

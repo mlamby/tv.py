@@ -29,10 +29,10 @@ If a named value is missing, `tv.py` renders it as an empty string.
 
 ### Formatting
 
-Descriptor objects such as `Column`, `Property`, and `PropertyPattern` can
-take a `formatter` callable. `Column` and `Property` formatters receive the raw
-value returned by the accessor. `PropertyPattern` formatters receive a
-`PathMatch`.
+Descriptor objects such as `StatusItem`, `Column`, `Property`, and
+`PropertyPattern` can take a `formatter` callable. `StatusItem`, `Column`, and
+`Property` formatters receive the raw value returned by the accessor.
+`PropertyPattern` formatters receive a `PathMatch`.
 
 ```python
 Column("Latency", "latency_ms", formatter=lambda value: f"{value:.0f} ms")
@@ -90,6 +90,56 @@ callable returning one. Dynamic styles are evaluated each render.
 ### Behavior
 
 `Text` is not focusable and does not handle keys.
+
+## StatusLine
+
+`StatusLine` displays one row of labeled status segments with predictable cell
+widths. It is useful for dashboard banners where live values should not move
+neighboring sections around as their text length changes.
+
+```python
+status = StatusLine(
+    [
+        StatusItem("Streams", lambda: len(streams), Size.fixed(12), align="right"),
+        StatusItem(
+            "Health",
+            lambda: health,
+            Size.fixed(14),
+            style=lambda: health_style(health),
+        ),
+        StatusItem("", "Tab focus | q exits", Size.flex(1), style="muted"),
+    ],
+    style="muted",
+)
+```
+
+### Data
+
+`StatusLine` accepts a list of `StatusItem` descriptors. `StatusItem.value` may
+be a constant or a zero-argument callable evaluated each render.
+
+### Formatting
+
+Each segment renders as `label value`. When either side is empty, only the
+non-empty text is rendered. `StatusItem.formatter` receives the raw value and
+returns display text.
+
+`StatusItem.width` uses the same `Size` model as layouts and table columns:
+
+- `Size.fixed(n)`: reserve exactly `n` cells for the segment.
+- `Size.flex(weight)`: share remaining cells after fixed, auto, and separators.
+- `Size.auto()`: use the current rendered segment width.
+
+The separator, `" | "` by default, is rendered between allocated segments.
+
+### Styling
+
+`StatusItem.style` controls the style for that segment. `StatusLine.style`
+controls separator styling.
+
+### Behavior
+
+`StatusLine` is not focusable and does not handle keys.
 
 ## PropertyGrid
 

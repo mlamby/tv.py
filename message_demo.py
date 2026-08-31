@@ -259,7 +259,7 @@ class MessageState:
 
 @dataclass
 class MessageWidgets:
-    status: tv.Text
+    status: tv.StatusLine
     tree: tv.TreeView
     leaves: tv.DataTable
     details: tv.PropertyGrid
@@ -399,7 +399,46 @@ def create_state() -> MessageState:
 
 
 def create_widgets(state: MessageState) -> MessageWidgets:
-    status = tv.Text(lambda: status_line(state), style="normal")
+    status = tv.StatusLine(
+        [
+            tv.StatusItem(
+                "Streams",
+                lambda: len(state.messages),
+                tv.Size.fixed(10),
+                align="right",
+            ),
+            tv.StatusItem(
+                "Latest",
+                lambda: min(state.messages, key=lambda message: message.age_seconds),
+                tv.Size.fixed(28),
+                formatter=lambda message: f"{message.name} {message.message_id}",
+            ),
+            tv.StatusItem(
+                "Age",
+                lambda: min(
+                    state.messages,
+                    key=lambda message: message.age_seconds,
+                ).age_seconds,
+                tv.Size.fixed(12),
+                align="right",
+                formatter=format_age,
+            ),
+            tv.StatusItem(
+                "Nav",
+                lambda: SPEED_KNOTS(state.messages.navigation.payload),
+                tv.Size.fixed(12),
+                align="right",
+                formatter=lambda value: f"{float(value):.1f} kn",
+            ),
+            tv.StatusItem(
+                "",
+                "Tab focus | q exits",
+                tv.Size.flex(1),
+                style="muted",
+            ),
+        ],
+        style="muted",
+    )
     tree = tv.TreeView(
         lambda: build_message_roots(state.messages),
         id="path",
@@ -533,20 +572,6 @@ def details_source(state: MessageState, tree: tv.TreeView) -> ReceivedMessage[An
             ):
                 return message
     return min(state.messages, key=lambda message: message.age_seconds)
-
-
-def status_line(state: MessageState) -> str:
-    latest = min(state.messages, key=lambda message: message.age_seconds)
-    navigation = state.messages.navigation
-    return " | ".join(
-        [
-            f"Streams {len(state.messages)}",
-            f"Latest {latest.name} {latest.message_id}",
-            f"Age {format_age(latest.age_seconds)}",
-            f"Nav {float(SPEED_KNOTS(navigation.payload)):5.1f} kn",
-            "Tab focus | q exits",
-        ]
-    )
 
 
 def build_message_roots(messages: Iterable[ReceivedMessage[Any]]) -> list[FieldNode]:
