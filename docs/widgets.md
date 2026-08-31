@@ -285,6 +285,8 @@ Handled keys:
 
 - `up`: move selection up.
 - `down`: move selection down.
+- `pageup`: move selection up by the visible body height.
+- `pagedown`: move selection down by the visible body height.
 - `home`: select the first row.
 - `end`: select the last row.
 
@@ -348,8 +350,15 @@ Handled keys:
 
 - `up`: move selection up.
 - `down`: move selection down.
-- `right` or `enter`: expand the selected node when it has children.
-- `left`: collapse the selected node when it is expanded.
+- `pageup`: move selection up by the visible height.
+- `pagedown`: move selection down by the visible height.
+- `home`: select the first visible node.
+- `end`: select the last visible node.
+- `right`: expand the selected node, or move to its first child when it is
+  already expanded.
+- `enter`: toggle expansion of the selected node when it has children.
+- `left`: collapse the selected node when it is expanded; otherwise collapse
+  and select its parent when it has one.
 
 Rendering automatically scrolls to keep the selected visible node in view.
 
@@ -396,6 +405,9 @@ Handled keys:
 
 - `up`: enter scrollback mode and scroll up one line.
 - `down`: scroll down one line; following resumes at the bottom.
+- `pageup`: enter scrollback mode and scroll up by the visible height.
+- `pagedown`: scroll down by the visible height; following resumes at the
+  bottom.
 - `home`: enter scrollback mode and jump to the first entry.
 - `end`: resume following the end.
 
