@@ -29,9 +29,10 @@ If a named value is missing, `tv.py` renders it as an empty string.
 
 ### Formatting
 
-Descriptor objects such as `Column` and `Property` can take a `formatter`
-callable. The formatter receives the raw value returned by the accessor and
-must return display text.
+Descriptor objects such as `Column`, `Property`, and `PropertyPattern` can
+take a `formatter` callable. `Column` and `Property` formatters receive the raw
+value returned by the accessor. `PropertyPattern` formatters receive a
+`PathMatch`.
 
 ```python
 Column("Latency", "latency_ms", formatter=lambda value: f"{value:.0f} ms")
@@ -53,8 +54,9 @@ style(source) -> style_name
 ```
 
 For `PropertyGrid`, `Property.style(raw_value)` receives the raw property
-value. For `DataTable`, `TreeView`, and `LogView`, the source is a row, node,
-or log entry.
+value, while `PropertyPattern.style(match)` receives a `PathMatch`. For
+`DataTable`, `TreeView`, and `LogView`, the source is a row, node, or log
+entry.
 
 ## Text
 
@@ -129,11 +131,80 @@ Each `Property` describes one row:
 - `label`: text shown in the label column.
 - `value`: dictionary key, attribute name, or callable receiving `source`.
 
+`PropertyPattern` describes generated rows. It is useful when a telemetry
+object has a nested group of related fields:
+
+```python
+details = PropertyGrid(
+    source=lambda: table.selected_item,
+    properties=[
+        Property("Name", "name"),
+        PropertyPattern(
+            "payload.health.*_status",
+            label="leaf",
+            style=lambda match: str(match.value),
+        ),
+    ],
+)
+```
+
+Pattern syntax follows the same dotted path shape as `path()`, with glob
+matching in field segments:
+
+- `*` matches zero or more characters inside one field name.
+- `?` matches one character inside one field name.
+- `[abc]` and `[!abc]` match field-name character classes.
+- `**` as a complete path segment recursively matches nested dictionaries,
+  objects, and sequences.
+- `[*]` expands list or tuple indexes.
+
+Examples:
+
+```python
+PropertyPattern("payload.health.*")
+PropertyPattern("payload.health.*_status")
+PropertyPattern("payload.health.**.*_status")
+PropertyPattern("payload.sensors[*].health.state")
+```
+
+Generated rows are sorted by resolved path by default. Set `sort=False` to keep
+source traversal order. Empty matches render no rows.
+
+`PropertyPattern.label` controls generated labels:
+
+- `"relative"`: show the path relative to the literal prefix before the first
+  wildcard, such as `api_status` or `[0].health.state`.
+- `"full"`: show the full resolved path.
+- `"leaf"`: show only the final field or index.
+
+Use `match_paths()` when the same traversal should feed another widget:
+
+```python
+leaves = DataTable(
+    columns=[
+        Column("Path", "path"),
+        Column("Type", "type_name"),
+        Column("Value", "value"),
+    ],
+    rows=lambda: match_paths(payload, prefix="navigation"),
+)
+```
+
+`match_paths()` returns `PathMatch` objects with `path`, `name`, `type_name`,
+and `value` attributes. It returns leaf values by default; pass
+`leaves_only=False` to include matched containers and intermediate objects.
+Pass `prefix=...` to mount returned paths under a display path.
+
+Use `iter_path_children(source, prefix=...)` when an application needs only
+immediate child fields, for example to build a `TreeView` view model with the
+same traversal rules.
+
 ### Formatting
 
 `Property.formatter` receives the raw value and returns display text.
-`Property.align` controls alignment of the value column and may be `"left"`,
-`"right"`, or `"center"`.
+`PropertyPattern.formatter` receives the matched `PathMatch`. `Property.align`
+and `PropertyPattern.align` control alignment of the value column and may be
+`"left"`, `"right"`, or `"center"`.
 
 `PropertyGrid(label_width=...)` sets a fixed label width. When omitted, the
 widest property label determines the label column width.
@@ -141,8 +212,9 @@ widest property label determines the label column width.
 ### Styling
 
 Property labels always use the `"muted"` style. Property values use
-`Property.style`, which can be either a style name or a callable. Callable
-styles receive the raw property value before formatting.
+`Property.style` or `PropertyPattern.style`, which can be either a style name
+or a callable. `Property.style` callables receive the raw property value before
+formatting. `PropertyPattern.style` callables receive the matched `PathMatch`.
 
 ### Behavior
 

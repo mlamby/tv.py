@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import ctypes
 import importlib
 import sys
 
@@ -18,7 +19,9 @@ def test_public_api_is_exported_for_copyable_framework_use() -> None:
         "HBox",
         "Panel",
         "Text",
+        "PathMatch",
         "Property",
+        "PropertyPattern",
         "PropertyGrid",
         "Column",
         "DataTable",
@@ -26,6 +29,8 @@ def test_public_api_is_exported_for_copyable_framework_use() -> None:
         "LogView",
         "Widget",
         "enable_emoji_support",
+        "iter_path_children",
+        "match_paths",
         "path",
     ]:
         assert namespace[name] is getattr(tv, name)
@@ -77,6 +82,165 @@ def test_path_accessor_uses_default_and_transform() -> None:
     assert tv.path("status.health", default="unknown")(source) == ""
 
 
+def test_match_paths_returns_leaf_matches_by_default() -> None:
+    source = {
+        "payload": {
+            "health": {
+                "api_status": "ok",
+                "fault_count": 0,
+            },
+            "sensors": [
+                {"state": "ok"},
+                {"state": "warning"},
+            ],
+        }
+    }
+
+    matches = tv.match_paths(source, "payload.**")
+
+    rendered = [
+        (match.path, match.name, match.type_name, match.value) for match in matches
+    ]
+
+    assert rendered == [
+        ("payload.health.api_status", "api_status", "str", "ok"),
+        ("payload.health.fault_count", "fault_count", "int", 0),
+        ("payload.sensors[0].state", "state", "str", "ok"),
+        ("payload.sensors[1].state", "state", "str", "warning"),
+    ]
+
+
+def test_iter_path_children_returns_immediate_children() -> None:
+    class Payload:
+        status = "ok"
+
+        def helper(self) -> str:
+            return "ignored"
+
+    payload = Payload()
+    history = [{"state": "old"}]
+    source = {
+        "payload": payload,
+        "history": history,
+    }
+
+    root_children = tv.iter_path_children(source)
+    payload_children = tv.iter_path_children(source["payload"], prefix="payload")
+    history_children = tv.iter_path_children(source["history"], prefix="history")
+
+    rendered_root = [
+        (child.path, child.name, child.type_name, child.value)
+        for child in root_children
+    ]
+
+    assert rendered_root == [
+        ("payload", "payload", "Payload", payload),
+        ("history", "history", "list", history),
+    ]
+    assert [(child.path, child.name, child.value) for child in payload_children] == [
+        ("payload.status", "status", "ok")
+    ]
+    assert [(child.path, child.name, child.value) for child in history_children] == [
+        ("history[0]", "[0]", history[0])
+    ]
+
+
+def test_match_paths_can_include_intermediate_matches() -> None:
+    source = {"payload": {"health": {"api_status": "ok"}}}
+
+    matches = tv.match_paths(source, "payload.**", leaves_only=False)
+
+    assert [match.path for match in matches] == [
+        "payload",
+        "payload.health",
+        "payload.health.api_status",
+    ]
+
+
+def test_match_paths_can_preserve_source_order_and_match_exact_indexes() -> None:
+    source = {
+        "payload": {
+            "z_status": "ok",
+            "a_status": "warning",
+            "history": ({"state": "old"}, {"state": "new"}),
+        }
+    }
+
+    unsorted = tv.match_paths(source, "payload.*_status", sort=False)
+    exact_index = tv.match_paths(source, "payload.history[1].state")
+
+    assert [match.path for match in unsorted] == [
+        "payload.z_status",
+        "payload.a_status",
+    ]
+    assert [(match.path, match.value) for match in exact_index] == [
+        ("payload.history[1].state", "new")
+    ]
+
+
+def test_match_paths_can_prefix_returned_paths() -> None:
+    source = [{"state": "ok"}, {"state": "warning"}]
+
+    matches = tv.match_paths(source, prefix="streams.navigation")
+    root_match = tv.match_paths("online", "", prefix="status")
+
+    assert [match.path for match in matches] == [
+        "streams.navigation[0].state",
+        "streams.navigation[1].state",
+    ]
+    assert [(match.path, match.name, match.value) for match in root_match] == [
+        ("status", "", "online")
+    ]
+
+
+def test_match_paths_supports_object_attributes_globs_and_indexes() -> None:
+    class Health:
+        api_status = "ok"
+        db_status = "warning"
+
+    class Payload:
+        health = Health()
+        sensors = [{"state": "ok"}, {"state": "error"}]
+
+    source = {"payload": Payload()}
+
+    status_matches = tv.match_paths(source, "payload.health.[a]*_status")
+    sensor_matches = tv.match_paths(source, "payload.sensors[*].state")
+
+    assert [match.path for match in status_matches] == ["payload.health.api_status"]
+    assert [match.value for match in sensor_matches] == ["ok", "error"]
+
+
+def test_match_paths_supports_ctypes_structures_and_arrays() -> None:
+    class Status(ctypes.Structure):
+        _fields_ = [
+            ("overall_health", ctypes.c_uint8),
+            ("fault_count", ctypes.c_uint16),
+        ]
+
+    StatusArray = Status * 2
+
+    class Payload(ctypes.Structure):
+        _fields_ = [
+            ("status", Status),
+            ("history", StatusArray),
+        ]
+
+    source = Payload(Status(1, 2), StatusArray(Status(0, 0), Status(2, 3)))
+
+    matches = tv.match_paths(source, "**.*_count")
+
+    rendered = [
+        (match.path, match.name, match.type_name, match.value) for match in matches
+    ]
+
+    assert rendered == [
+        ("history[0].fault_count", "fault_count", "int", 0),
+        ("history[1].fault_count", "fault_count", "int", 3),
+        ("status.fault_count", "fault_count", "int", 2),
+    ]
+
+
 def test_property_grid_styles_raw_values_before_formatting() -> None:
     grid = tv.PropertyGrid(
         {"health": "warning"},
@@ -110,6 +274,162 @@ def test_property_grid_resolves_callable_source_when_rendering() -> None:
     grid.render(tv.Painter(buffer), tv.RenderContext(20, 1, False, None))
 
     assert buffer.line_text(0).rstrip() == "Name bravo"
+
+
+def test_property_grid_expands_direct_property_pattern_matches() -> None:
+    source = {
+        "payload": {
+            "health": {
+                "api_status": "ok",
+                "db_status": "warning",
+                "latency_ms": 42,
+            }
+        }
+    }
+    grid = tv.PropertyGrid(
+        source,
+        [tv.PropertyPattern("payload.health.*_status")],
+    )
+    buffer = tv.ScreenBuffer(24, 2)
+
+    grid.render(tv.Painter(buffer), tv.RenderContext(24, 2))
+
+    assert buffer.line_text(0).rstrip() == "api_status ok"
+    assert buffer.line_text(1).rstrip() == "db_status  warning"
+
+
+def test_property_grid_pattern_supports_glob_character_classes() -> None:
+    source = {
+        "payload": {
+            "health": {
+                "api_status": "ok",
+                "db_status": "warning",
+                "cache_status": "ok",
+            }
+        }
+    }
+    grid = tv.PropertyGrid(
+        source,
+        [tv.PropertyPattern("payload.health.[ad]*_status")],
+    )
+    buffer = tv.ScreenBuffer(24, 2)
+
+    grid.render(tv.Painter(buffer), tv.RenderContext(24, 2))
+
+    assert buffer.line_text(0).rstrip() == "api_status ok"
+    assert buffer.line_text(1).rstrip() == "db_status  warning"
+
+
+def test_property_grid_expands_recursive_and_sequence_patterns() -> None:
+    source = {
+        "payload": {
+            "sensors": [
+                {"health": {"state": "ok"}},
+                {"health": {"state": "error"}},
+            ],
+            "subsystem": {"nested": {"db_status": "warning"}},
+        }
+    }
+    grid = tv.PropertyGrid(
+        source,
+        [
+            tv.PropertyPattern("payload.sensors[*].health.state"),
+            tv.PropertyPattern("payload.**.*_status"),
+        ],
+    )
+    buffer = tv.ScreenBuffer(36, 3)
+
+    grid.render(tv.Painter(buffer), tv.RenderContext(36, 3))
+
+    assert buffer.line_text(0).startswith("[0].health.state")
+    assert buffer.line_text(0).rstrip().endswith("ok")
+    assert buffer.line_text(1).startswith("[1].health.state")
+    assert buffer.line_text(1).rstrip().endswith("error")
+    assert buffer.line_text(2).rstrip() == "subsystem.nested.db_status warning"
+
+
+def test_property_grid_pattern_labels_full_leaf_and_empty_matches() -> None:
+    source = {"payload": {"health": {"api_status": "ok"}}}
+    grid = tv.PropertyGrid(
+        source,
+        [
+            tv.PropertyPattern("payload.health.*_status", label="full"),
+            tv.PropertyPattern("payload.health.*_status", label="leaf"),
+            tv.PropertyPattern("payload.health.missing_*"),
+        ],
+    )
+    buffer = tv.ScreenBuffer(40, 3)
+
+    grid.render(tv.Painter(buffer), tv.RenderContext(40, 3))
+
+    assert buffer.line_text(0).rstrip() == "payload.health.api_status ok"
+    assert buffer.line_text(1).rstrip() == "api_status                ok"
+    assert buffer.line_text(2).rstrip() == ""
+
+
+def test_property_grid_pattern_formatter_and_style_receive_matches() -> None:
+    seen: list[tv.PathMatch] = []
+    source = {"payload": {"health": {"api_status": "warning"}}}
+
+    def record_seen(match: tv.PathMatch) -> str:
+        seen.append(match)
+        return str(match.value)
+
+    grid = tv.PropertyGrid(
+        source,
+        [
+            tv.PropertyPattern(
+                "payload.health.*_status",
+                formatter=lambda match: f"{match.name}:{str(match.value).upper()}",
+                style=record_seen,
+            )
+        ],
+    )
+    buffer = tv.ScreenBuffer(32, 1)
+
+    grid.render(tv.Painter(buffer), tv.RenderContext(24, 1))
+
+    assert buffer.line_text(0).rstrip() == "api_status api_status:WARNING"
+    assert buffer._cells[0][11].style == "warning"
+    assert [(match.path, match.value) for match in seen] == [
+        ("payload.health.api_status", "warning")
+    ]
+
+
+def test_property_grid_pattern_expands_public_object_attributes() -> None:
+    class Health:
+        api_status = "ok"
+
+        def helper(self) -> str:
+            return "ignored"
+
+    class Payload:
+        health = Health()
+
+    source = {"payload": Payload()}
+    grid = tv.PropertyGrid(source, [tv.PropertyPattern("payload.health.*_status")])
+    buffer = tv.ScreenBuffer(20, 1)
+
+    grid.render(tv.Painter(buffer), tv.RenderContext(20, 1))
+
+    assert buffer.line_text(0).rstrip() == "api_status ok"
+
+
+def test_property_grid_recursive_pattern_treats_scalars_as_leaves() -> None:
+    source = {
+        "payload": {
+            "health": {
+                "api_status": "ok",
+                "count": 1,
+            }
+        }
+    }
+    grid = tv.PropertyGrid(source, [tv.PropertyPattern("payload.**.real")])
+    buffer = tv.ScreenBuffer(24, 1)
+
+    grid.render(tv.Painter(buffer), tv.RenderContext(24, 1))
+
+    assert buffer.line_text(0).rstrip() == ""
 
 
 def test_enable_emoji_support_reports_missing_optional_dependencies(
