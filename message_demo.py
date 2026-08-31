@@ -8,6 +8,7 @@ models from them, point widgets at the new data, then render.
 from __future__ import annotations
 
 import ctypes
+import enum
 import random
 import time
 from collections.abc import Iterable, Iterator, Mapping
@@ -18,10 +19,13 @@ from typing import Any, Generic, Optional, TypeVar
 import tv
 
 KNOTS_PER_METER_PER_SECOND = 1.9438444924406
-HEALTH_OK = 0
-HEALTH_WARNING = 1
-HEALTH_ERROR = 2
 PayloadT = TypeVar("PayloadT", bound=ctypes.Structure)
+
+
+class Health(enum.IntEnum):
+    OK = 0
+    WARNING = 1
+    ERROR = 2
 
 
 class MessageHeader(ctypes.Structure):
@@ -33,9 +37,17 @@ class MessageHeader(ctypes.Structure):
 
 class MessageStatus(ctypes.Structure):
     _fields_ = [
-        ("overall_health", ctypes.c_uint8),
+        ("_overall_health", ctypes.c_uint8),
         ("fault_count", ctypes.c_uint16),
     ]
+
+    @property
+    def overall_health(self) -> Health:
+        return Health(self._overall_health)
+
+    @overall_health.setter
+    def overall_health(self, value: Health) -> None:
+        self._overall_health = value.value
 
 
 class GeoPosition(ctypes.Structure):
@@ -151,13 +163,15 @@ class SensorPayload(ctypes.Structure):
 
 
 def health_name(value: Any) -> str:
+    if isinstance(value, enum.Enum):
+        return value.name.lower()
     if isinstance(value, str):
         return value
-    if value == HEALTH_OK:
+    if value == Health.OK:
         return "ok"
-    if value == HEALTH_WARNING:
+    if value == Health.WARNING:
         return "warning"
-    if value == HEALTH_ERROR:
+    if value == Health.ERROR:
         return "error"
     return "unknown"
 
@@ -213,11 +227,11 @@ class ReceivedMessage(Generic[PayloadT]):
 
     @property
     def message_id(self) -> str:
-        return self.payload.header.message_id
+        return str(self.payload.header.message_id)
 
     @property
     def source(self) -> str:
-        return self.payload.header.source
+        return str(self.payload.header.source)
 
 
 @dataclass
@@ -228,7 +242,12 @@ class MessageCollection:
     sensors: ReceivedMessage[SensorPayload]
 
     def __post_init__(self) -> None:
-        self._ordered = [self.navigation, self.power, self.compute, self.sensors]
+        self._ordered: list[ReceivedMessage[Any]] = [
+            self.navigation,
+            self.power,
+            self.compute,
+            self.sensors,
+        ]
         names = {message.name for message in self._ordered}
         if names != {"navigation", "power", "compute", "sensors"}:
             raise ValueError("message names must match collection field names")
@@ -281,7 +300,7 @@ def make_navigation_message(sequence: int) -> NavigationPayload:
     speed_ms = 9.8 + random.uniform(-0.7, 0.7)
     return NavigationPayload(
         MessageHeader(f"nav-{sequence:06d}", "bridge.telemetry"),
-        MessageStatus(HEALTH_OK, 0),
+        MessageStatus(Health.OK, 0),
         MotionSolution(
             round(speed_ms, 3),
             round(184.0 + random.uniform(-2.0, 2.0), 2),
@@ -296,14 +315,14 @@ def make_navigation_message(sequence: int) -> NavigationPayload:
 
 def make_power_message(sequence: int) -> PowerPayload:
     battery_percent = max(0.0, min(100.0, 82.0 + random.uniform(-4.0, 4.0)))
-    health = HEALTH_OK
+    health = Health.OK
     if battery_percent < 25.0:
-        health = HEALTH_ERROR
+        health = Health.ERROR
     elif battery_percent < 45.0:
-        health = HEALTH_WARNING
+        health = Health.WARNING
     return PowerPayload(
         MessageHeader(f"pwr-{sequence:06d}", "power.monitor"),
-        MessageStatus(health, 0 if health == HEALTH_OK else 1),
+        MessageStatus(health, 0 if health == Health.OK else 1),
         PowerSystem(
             BatteryState(
                 round(47.8 + random.uniform(-0.4, 0.4), 2),
@@ -317,14 +336,14 @@ def make_power_message(sequence: int) -> PowerPayload:
 
 def make_compute_message(sequence: int) -> ComputePayload:
     cpu_temp_c = 51.0 + random.uniform(-6.0, 12.0)
-    health = HEALTH_OK
+    health = Health.OK
     if cpu_temp_c > 82.0:
-        health = HEALTH_ERROR
+        health = Health.ERROR
     elif cpu_temp_c > 70.0:
-        health = HEALTH_WARNING
+        health = Health.WARNING
     return ComputePayload(
         MessageHeader(f"cmp-{sequence:06d}", "edge.compute"),
-        MessageStatus(health, 0 if health == HEALTH_OK else 1),
+        MessageStatus(health, 0 if health == Health.OK else 1),
         ComputeState(
             CpuState(round(random.uniform(0.35, 0.92), 2), round(cpu_temp_c, 1)),
             MemoryState(random.randint(2100, 2800), 4096),
@@ -335,10 +354,10 @@ def make_compute_message(sequence: int) -> ComputePayload:
 def make_sensor_message(sequence: int) -> SensorPayload:
     imu_dropouts = random.randint(0, 3)
     gps_online = random.random() > 0.08
-    health = HEALTH_OK if gps_online and imu_dropouts < 3 else HEALTH_WARNING
+    health = Health.OK if gps_online and imu_dropouts < 3 else Health.WARNING
     return SensorPayload(
         MessageHeader(f"sns-{sequence:06d}", "sensor.fusion"),
-        MessageStatus(health, 0 if health == HEALTH_OK else 1),
+        MessageStatus(health, 0 if health == Health.OK else 1),
         SensorReadingArray(
             SensorReading(
                 "imu",
@@ -625,6 +644,8 @@ def count_nodes(nodes: list[FieldNode]) -> int:
 
 
 def format_value(value: Any) -> str:
+    if isinstance(value, enum.Enum):
+        return value.name
     if isinstance(value, float):
         return f"{value:.3f}"
     return str(value)

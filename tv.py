@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import contextlib
 import ctypes
+import enum
 import fnmatch
 import importlib
 import importlib.util
@@ -2349,7 +2350,7 @@ def _prefix_path(prefix: str, path_value: str) -> str:
 def _is_leaf_value(source: Any) -> bool:
     return source is None or isinstance(
         source,
-        (str, bytes, bytearray, bool, int, float, complex),
+        (str, bytes, bytearray, bool, int, float, complex, enum.Enum),
     )
 
 
