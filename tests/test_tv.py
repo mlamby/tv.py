@@ -245,6 +245,31 @@ def test_message_demo_formats_python_enums_by_name() -> None:
     assert message_demo.format_value(Health.ERROR) == "ERROR"
 
 
+def test_message_demo_health_fields_are_python_enums() -> None:
+    import message_demo
+
+    state = message_demo.create_state()
+
+    assert (
+        state.messages.navigation.payload.status.overall_health
+        is message_demo.Health.OK
+    )
+    matches = tv.match_paths(
+        state.messages.navigation.payload,
+        "status.*_health",
+    )
+    assert [
+        (match.path, match.name, match.type_name, match.value) for match in matches
+    ] == [
+        (
+            "status.overall_health",
+            "overall_health",
+            "Health",
+            message_demo.Health.OK,
+        )
+    ]
+
+
 def test_match_paths_supports_ctypes_structures_and_arrays() -> None:
     class Status(ctypes.Structure):
         _fields_ = [
