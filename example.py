@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import contextlib
 import random
 import time
 from dataclasses import dataclass, field
@@ -9,13 +10,8 @@ from typing import Any
 
 import tv
 
-try:
+with contextlib.suppress(RuntimeError):
     tv.enable_emoji_support()
-except RuntimeError:
-    # Optional emoji-aware measurement needs regex and wcwidth. Keep the demo
-    # runnable in dependency-free environments by using tv.py's built-in
-    # Unicode width approximation when those packages are not installed.
-    pass
 
 
 @dataclass
@@ -25,6 +21,7 @@ class Device:
     status: str
     rate: float
     latency_ms: float
+    payload: dict[str, Any] = field(default_factory=dict)
     children: list[Device] = field(default_factory=lambda: [])
 
 
@@ -46,14 +43,42 @@ class DashboardWidgets:
 
 def create_data_model() -> DashboardModel:
     devices = [
-        Device("api-1", "/svc/api-1", "ok", 420.0, 18.0),
-        Device("api-2", "/svc/api-2", "warning", 370.0, 41.0),
-        Device("worker-1", "/svc/worker-1", "ok", 255.0, 24.0),
-        Device("db-primary", "/data/db-primary", "ok", 92.0, 11.0),
+        Device(
+            "api-1",
+            "/svc/api-1",
+            "ok",
+            420.0,
+            18.0,
+            health_payload("ok"),
+        ),
+        Device(
+            "api-2",
+            "/svc/api-2",
+            "warning",
+            370.0,
+            41.0,
+            health_payload("warning"),
+        ),
+        Device(
+            "worker-1",
+            "/svc/worker-1",
+            "ok",
+            255.0,
+            24.0,
+            health_payload("ok"),
+        ),
+        Device(
+            "db-primary",
+            "/data/db-primary",
+            "ok",
+            92.0,
+            11.0,
+            health_payload("ok"),
+        ),
     ]
     roots = [
-        Device("services", "/svc", "ok", 0.0, 0.0, devices[:3]),
-        Device("storage", "/data", "ok", 0.0, 0.0, devices[3:]),
+        Device("services", "/svc", "ok", 0.0, 0.0, children=devices[:3]),
+        Device("storage", "/data", "ok", 0.0, 0.0, children=devices[3:]),
     ]
     return DashboardModel(devices, roots, ["dashboard started"])
 
@@ -99,6 +124,11 @@ def create_widgets(model: DashboardModel) -> DashboardWidgets:
             ),
             tv.Property("Rate/s", "rate", formatter=format_float),
             tv.Property("Latency", "latency_ms", formatter=format_ms),
+            tv.PropertyPattern(
+                "payload.health.*_status",
+                label="leaf",
+                style=lambda match: status_style_name(str(match.value)),
+            ),
         ]
     )
     log_view = tv.LogView(
@@ -176,6 +206,24 @@ def update_devices(devices: list[Device]) -> None:
             device.status = "warning"
         else:
             device.status = "ok"
+        update_health_payload(device)
+
+
+def health_payload(status: str) -> dict[str, Any]:
+    return {
+        "health": {
+            "service_status": status,
+            "network_status": "ok",
+            "storage_status": "ok",
+        }
+    }
+
+
+def update_health_payload(device: Device) -> None:
+    health = device.payload.setdefault("health", {})
+    health["service_status"] = device.status
+    health["network_status"] = "warning" if device.latency_ms > 35 else "ok"
+    health["storage_status"] = "warning" if device.rate < 100 else "ok"
 
 
 def format_float(value: Any) -> str:

@@ -222,7 +222,10 @@ tree = TreeView(
 * Displays key/value properties for one object or a list of property descriptors.
 * Should support labels, attribute/key names or accessor functions, alignment,
   optional formatting, and optional semantic style.
-* Style accessors should receive the raw value before formatting.
+* May generate rows from explicit path patterns for nested telemetry groups,
+  such as `payload.health.*_status` or `payload.sensors[*].health.state`.
+* Explicit property style accessors should receive the raw value before
+  formatting; pattern-generated style accessors may receive match context.
 * Useful for showing details of a selected object.
 
 `LogView`:

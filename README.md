@@ -103,8 +103,9 @@ application objects to widgets.
 
 `Column` values, `Property` values, and `TreeView` `id`, `label`, and
 `children` accessors may be attribute/key names or callables. Use a field name
-for direct reads such as `"status"` or `"children"`, and use a callable when
-the display value is derived from more than one field.
+for direct reads such as `"status"` or `"children"`, use `path()` for nested
+reads, and use a callable when the display value is derived from more than one
+field.
 
 `PropertyGrid.source`, `DataTable.rows`, and `TreeView.roots` may be concrete
 values or zero-argument callables that return the current value. Callable
@@ -128,7 +129,10 @@ table = DataTable(
 
 details = PropertyGrid(
     source=lambda: selected_message(tree.selected_node),
-    properties=[Property("Health", path("message.status.overall_health"))],
+    properties=[
+        Property("Health", path("message.status.overall_health")),
+        PropertyPattern("message.payload.health.*_status", label="leaf"),
+    ],
 )
 ```
 
@@ -145,9 +149,49 @@ speed_knots = path(
 )
 ```
 
-`Property` style callables receive the raw value before formatting, so styling
-can be based on domain values even when the displayed text includes units,
-rounding, or other formatting.
+Use `PropertyPattern` when a `PropertyGrid` should render multiple properties
+from a nested object. Pattern segments use shell-style glob matching:
+
+```python
+details = PropertyGrid(
+    source=lambda: latest_message,
+    properties=[
+        Property("Message", path("header.message_id")),
+        PropertyPattern(
+            "payload.health.*_status",
+            label="leaf",
+            style=lambda match: str(match.value),
+        ),
+        PropertyPattern("payload.sensors[*].health.state"),
+        PropertyPattern("payload.**.*_status"),
+    ],
+)
+```
+
+`*`, `?`, and character classes such as `[ab]` match within one field name.
+`**` as a full path segment matches across nested dictionaries, objects, and
+sequences. `[*]` expands list or tuple indexes. Pattern rows are sorted by
+resolved path by default and render no rows when nothing matches.
+
+Use `match_paths()` when the same traversal should feed another widget:
+
+```python
+leaves = DataTable(
+    columns=[
+        Column("Path", "path"),
+        Column("Type", "type_name"),
+        Column("Value", "value"),
+    ],
+    rows=lambda: match_paths(latest_message["payload"], prefix="latest"),
+)
+```
+
+`Property` style callables receive the raw value before formatting.
+`PropertyPattern` style and formatter callables receive a `PathMatch`, so they
+can use `match.path`, `match.name`, `match.type_name`, and `match.value`.
+Pass `prefix=...` to mount returned paths under a display path.
+Use `iter_path_children()` when an application needs immediate child fields,
+for example to build a tree view model with the same traversal rules.
 
 A typical loop looks like:
 

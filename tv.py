@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import contextlib
 import ctypes
+import fnmatch
 import importlib
 import importlib.util
 import os
@@ -27,6 +28,9 @@ __version__ = "0.1.0"
 Accessor = Union[str, Callable[[Any], Any]]
 Style = Union[str, Callable[[Any], str]]
 TextStyle = Union[str, Callable[[], str]]
+PropertySpec = Union["Property", "PropertyPattern"]
+PropertyPatternFormatter = Callable[["PathMatch"], str]
+PropertyPatternStyle = Union[str, Callable[["PathMatch"], str]]
 
 
 ESC = "\x1b"
@@ -912,6 +916,82 @@ class Property:
     style: Style = "normal"
 
 
+@dataclass
+class PropertyPattern:
+    """Descriptor for generated :class:`PropertyGrid` rows.
+
+    Attributes:
+        pattern: Dotted path pattern. Field segments support ``*``, ``?``,
+            bracket character classes, and recursive ``**`` path segments.
+            Sequence indexes support ``[*]`` wildcard expansion.
+        label: Label mode for generated rows: ``"relative"``, ``"full"``, or
+            ``"leaf"``.
+        align: Alignment for generated value cells.
+        formatter: Optional function receiving a :class:`PathMatch` and
+            returning display text.
+        style: Style name or callable receiving each match and returning a
+            style name.
+        sort: When true, generated rows are sorted by resolved path for stable
+            rendering.
+    """
+
+    pattern: str
+    label: str = "relative"
+    align: str = "left"
+    formatter: Optional[PropertyPatternFormatter] = None
+    style: PropertyPatternStyle = "normal"
+    sort: bool = True
+
+
+@dataclass
+class _PropertyRow:
+    label: str
+    raw: Any
+    align: str
+    formatter: Optional[Callable[[], str]]
+    style: Union[str, Callable[[], str]]
+
+
+def _property_formatter_callback(
+    formatter: Callable[[Any], str],
+    raw: Any,
+) -> Callable[[], str]:
+    def callback() -> str:
+        return formatter(raw)
+
+    return callback
+
+
+def _property_style_callback(
+    style: Callable[[Any], str],
+    raw: Any,
+) -> Callable[[], str]:
+    def callback() -> str:
+        return style(raw)
+
+    return callback
+
+
+def _pattern_formatter_callback(
+    formatter: PropertyPatternFormatter,
+    match: "PathMatch",
+) -> Callable[[], str]:
+    def callback() -> str:
+        return formatter(match)
+
+    return callback
+
+
+def _pattern_style_callback(
+    style: Callable[["PathMatch"], str],
+    match: "PathMatch",
+) -> Callable[[], str]:
+    def callback() -> str:
+        return style(match)
+
+    return callback
+
+
 class PropertyGrid(Widget):
     """Display key/value properties for one application object.
 
@@ -919,7 +999,8 @@ class PropertyGrid(Widget):
         source: Object or dictionary read by property descriptors, or a
             zero-argument callable that returns one. It may be replaced by the
             application between renders.
-        properties: Ordered list of :class:`Property` descriptors.
+        properties: Ordered list of :class:`Property` and
+            :class:`PropertyPattern` descriptors.
         label_width: Optional fixed label column width. When omitted, the
             widest label determines the width.
     """
@@ -927,7 +1008,7 @@ class PropertyGrid(Widget):
     def __init__(
         self,
         source: Any = None,
-        properties: Optional[list[Property]] = None,
+        properties: Optional[list[PropertySpec]] = None,
         label_width: Optional[int] = None,
     ) -> None:
         self.source = source
@@ -935,26 +1016,27 @@ class PropertyGrid(Widget):
         self.label_width = label_width
 
     def preferred_size(self, axis: str) -> int:
+        rows = self._property_rows(self._source())
         if axis == "vertical":
-            return max(1, len(self.properties))
-        labels = [display_width(prop.label) for prop in self.properties]
+            return max(1, len(rows))
+        labels = [display_width(row.label) for row in rows]
         return (max(labels) if labels else 8) + 12
 
     def render(self, painter: Painter, context: RenderContext) -> None:
         del context
         source = self._source()
+        rows = self._property_rows(source)
         label_width = self.label_width
         if label_width is None:
             label_width = max(
-                (display_width(prop.label) for prop in self.properties),
+                (display_width(row.label) for row in rows),
                 default=0,
             )
         label_width = min(label_width, max(0, painter.width - 1))
-        for y, prop in enumerate(self.properties[: painter.height]):
-            raw = _resolve_accessor(source, prop.value)
-            value = prop.formatter(raw) if prop.formatter else str(raw)
-            style = _resolve_style(prop.style, raw)
-            painter.write(0, y, prop.label, "muted", width=label_width)
+        for y, row in enumerate(rows[: painter.height]):
+            value = row.formatter() if row.formatter else str(row.raw)
+            style = row.style() if callable(row.style) else row.style
+            painter.write(0, y, row.label, "muted", width=label_width)
             if painter.width > label_width:
                 painter.write(label_width, y, " ", width=1)
             value_width = max(0, painter.width - label_width - 1)
@@ -964,11 +1046,29 @@ class PropertyGrid(Widget):
                 value,
                 style,
                 width=value_width,
-                align=prop.align,
+                align=row.align,
             )
 
     def _source(self) -> Any:
         return self.source() if callable(self.source) else self.source
+
+    def _property_rows(self, source: Any) -> list[_PropertyRow]:
+        rows: list[_PropertyRow] = []
+        for prop in self.properties:
+            if isinstance(prop, PropertyPattern):
+                rows.extend(_expand_property_pattern(source, prop))
+                continue
+            raw = _resolve_accessor(source, prop.value)
+            formatter: Optional[Callable[[], str]] = None
+            if prop.formatter:
+                formatter = _property_formatter_callback(prop.formatter, raw)
+            style: Union[str, Callable[[], str]]
+            if callable(prop.style):
+                style = _property_style_callback(prop.style, raw)
+            else:
+                style = prop.style
+            rows.append(_PropertyRow(prop.label, raw, prop.align, formatter, style))
+        return rows
 
 
 @dataclass
@@ -1669,6 +1769,388 @@ def _allocate_column_widths(
 _MISSING = object()
 
 
+@dataclass(frozen=True)
+class _PatternIndex:
+    value: Optional[int] = None
+    wildcard: bool = False
+
+
+@dataclass(frozen=True)
+class _PatternSegment:
+    field: Optional[str]
+    indexes: tuple[_PatternIndex, ...] = ()
+    recursive: bool = False
+
+
+@dataclass(frozen=True)
+class PathMatch:
+    """One value matched by :func:`match_paths`.
+
+    Attributes:
+        path: Resolved dotted path without a root marker.
+        value: Matched value.
+        name: Final field name or index label.
+        type_name: Python type name for ``value``.
+    """
+
+    path: str
+    value: Any
+    name: str
+    type_name: str
+
+
+def iter_path_children(source: Any, *, prefix: str = "") -> list[PathMatch]:
+    """Return immediate children of ``source`` using path traversal semantics."""
+
+    return [
+        PathMatch(
+            _prefix_path(prefix, name),
+            value,
+            name,
+            type(value).__name__,
+        )
+        for name, value in _iter_child_values(source)
+    ]
+
+
+def _expand_property_pattern(source: Any, prop: PropertyPattern) -> list[_PropertyRow]:
+    matches = match_paths(
+        source,
+        prop.pattern,
+        leaves_only=False,
+        sort=prop.sort,
+    )
+    prefix = _literal_prefix(_parse_path_pattern(prop.pattern))
+    rows: list[_PropertyRow] = []
+    for match in matches:
+        formatter: Optional[Callable[[], str]] = None
+        if prop.formatter:
+            formatter = _pattern_formatter_callback(prop.formatter, match)
+        style: Union[str, Callable[[], str]]
+        if callable(prop.style):
+            style = _pattern_style_callback(prop.style, match)
+        else:
+            style = prop.style
+        rows.append(
+            _PropertyRow(
+                _property_pattern_label(match, prop.label, prefix),
+                match.value,
+                prop.align,
+                formatter,
+                style,
+            )
+        )
+    return rows
+
+
+def _property_pattern_label(match: PathMatch, mode: str, prefix: str) -> str:
+    if mode == "full":
+        return match.path
+    if mode == "leaf":
+        return match.name
+    if prefix == "":
+        return match.path
+    if match.path == prefix:
+        return match.name
+    if match.path.startswith(prefix + "."):
+        return match.path[len(prefix) + 1 :]
+    if match.path.startswith(prefix + "["):
+        return match.path[len(prefix) :]
+    return match.path
+
+
+def match_paths(
+    source: Any,
+    pattern: str = "**",
+    *,
+    leaves_only: bool = True,
+    sort: bool = True,
+    prefix: str = "",
+) -> list[PathMatch]:
+    """Return values from ``source`` whose paths match ``pattern``.
+
+    ``pattern`` uses the same dotted path syntax as :class:`PropertyPattern`.
+    By default only terminal values are returned, which is useful for building
+    leaf-field tables from nested telemetry objects. ``prefix`` mounts returned
+    paths below a display path without changing the matched value.
+    """
+
+    raw_matches = _match_path_pattern(source, pattern)
+    matches = [
+        PathMatch(
+            _prefix_path(prefix, raw.path),
+            raw.value,
+            _path_leaf(raw.path),
+            type(raw.value).__name__,
+        )
+        for raw in raw_matches
+        if not leaves_only or _is_match_leaf(raw.value)
+    ]
+    if sort:
+        matches.sort(key=lambda match: match.path)
+    return matches
+
+
+@dataclass(frozen=True)
+class _RawPathMatch:
+    path: str
+    value: Any
+
+
+def _path_leaf(path_value: str) -> str:
+    if path_value.endswith("]"):
+        bracket = path_value.rfind("[")
+        if bracket != -1:
+            return path_value[bracket:]
+    dot = path_value.rfind(".")
+    if dot != -1:
+        return path_value[dot + 1 :]
+    return path_value
+
+
+def _match_path_pattern(source: Any, pattern: str) -> list[_RawPathMatch]:
+    segments = _parse_path_pattern(pattern)
+    matches: list[_RawPathMatch] = []
+    seen: set[tuple[int, int]] = set()
+    _match_pattern_segments(
+        source,
+        segments,
+        0,
+        "",
+        matches,
+        seen,
+    )
+    return matches
+
+
+def _match_pattern_segments(
+    value: Any,
+    segments: list[_PatternSegment],
+    index: int,
+    path_value: str,
+    matches: list[_RawPathMatch],
+    seen: set[tuple[int, int]],
+) -> None:
+    if index == len(segments):
+        matches.append(_RawPathMatch(path_value, value))
+        return
+    segment = segments[index]
+    if segment.recursive:
+        _match_pattern_segments(
+            value,
+            segments,
+            index + 1,
+            path_value,
+            matches,
+            seen,
+        )
+        identity = (id(value), index)
+        if identity in seen:
+            return
+        seen.add(identity)
+        for child in iter_path_children(value, prefix=path_value):
+            _match_pattern_segments(
+                child.value,
+                segments,
+                index,
+                child.path,
+                matches,
+                seen,
+            )
+        return
+    for next_path, next_value in _match_pattern_segment(value, path_value, segment):
+        _match_pattern_segments(
+            next_value,
+            segments,
+            index + 1,
+            next_path,
+            matches,
+            seen,
+        )
+
+
+def _match_pattern_segment(
+    value: Any,
+    path_value: str,
+    segment: _PatternSegment,
+) -> list[tuple[str, Any]]:
+    candidates: list[tuple[str, Any]]
+    if segment.field is None:
+        candidates = [(path_value, value)]
+    elif _is_leaf_value(value):
+        return []
+    elif _has_glob(segment.field):
+        candidates = [
+            (child.path, child.value)
+            for child in iter_path_children(value, prefix=path_value)
+            if not child.name.startswith("[")
+            and fnmatch.fnmatchcase(child.name, segment.field)
+        ]
+    else:
+        child = _get_value(value, segment.field, _MISSING)
+        if child is _MISSING:
+            return []
+        candidates = [(_join_path(path_value, segment.field), child)]
+    for pattern_index in segment.indexes:
+        next_candidates: list[tuple[str, Any]] = []
+        for candidate_path, candidate_value in candidates:
+            if pattern_index.wildcard:
+                for item_index, item_value in _iter_index_values(candidate_value):
+                    next_candidates.append(
+                        (f"{candidate_path}[{item_index}]", item_value)
+                    )
+                continue
+            try:
+                item_value = candidate_value[cast(int, pattern_index.value)]
+            except (IndexError, KeyError, TypeError):
+                continue
+            next_candidates.append(
+                (f"{candidate_path}[{pattern_index.value}]", item_value)
+            )
+        candidates = next_candidates
+    return candidates
+
+
+def _parse_path_pattern(pattern: str) -> list[_PatternSegment]:
+    if pattern == "":
+        return []
+    segments: list[_PatternSegment] = []
+    for raw_segment in pattern.split("."):
+        if raw_segment == "":
+            raise ValueError(f"Invalid path pattern: {pattern!r}")
+        if raw_segment == "**":
+            segments.append(_PatternSegment(None, recursive=True))
+            continue
+        field, indexes = _parse_pattern_segment(raw_segment, pattern)
+        segments.append(_PatternSegment(field, tuple(indexes)))
+    return segments
+
+
+def _parse_pattern_segment(
+    segment: str,
+    pattern: str,
+) -> tuple[Optional[str], list[_PatternIndex]]:
+    indexes: list[_PatternIndex] = []
+    bracket = segment.find("[")
+    if bracket == -1:
+        return segment, indexes
+    field = segment[:bracket] or None
+    cursor = bracket
+    while cursor < len(segment):
+        if segment[cursor] != "[":
+            raise ValueError(f"Invalid path pattern: {pattern!r}")
+        end = segment.find("]", cursor + 1)
+        if end == -1:
+            raise ValueError(f"Invalid path pattern: {pattern!r}")
+        raw_index = segment[cursor + 1 : end]
+        if raw_index == "*":
+            indexes.append(_PatternIndex(wildcard=True))
+        elif raw_index.isdigit():
+            indexes.append(_PatternIndex(int(raw_index)))
+        else:
+            return segment, indexes
+        cursor = end + 1
+        if cursor < len(segment) and segment[cursor] != "[":
+            return segment, []
+    return field, indexes
+
+
+def _literal_prefix(segments: list[_PatternSegment]) -> str:
+    prefix = ""
+    for segment in segments:
+        if segment.recursive:
+            break
+        if segment.field is not None and _has_glob(segment.field):
+            break
+        if segment.field is not None:
+            prefix = _join_path(prefix, segment.field)
+        for index in segment.indexes:
+            if index.wildcard:
+                return prefix
+            prefix = f"{prefix}[{index.value}]"
+    return prefix
+
+
+def _has_glob(value: str) -> bool:
+    return any(char in value for char in "*?[")
+
+
+def _iter_child_values(source: Any) -> Iterator[tuple[str, Any]]:
+    yield from _iter_named_values(source)
+    yield from (
+        (f"[{index}]", value) for index, value in _iter_index_values(source)
+    )
+
+
+def _iter_named_values(source: Any) -> Iterator[tuple[str, Any]]:
+    if _is_leaf_value(source):
+        return
+    if isinstance(source, Mapping):
+        for key, value in source.items():
+            if isinstance(key, str):
+                yield key, value
+        return
+    for name in dir(source):
+        if name.startswith("_"):
+            continue
+        try:
+            value = getattr(source, name)
+        except Exception:
+            continue
+        if callable(value):
+            continue
+        yield name, value
+
+
+def _iter_index_values(source: Any) -> Iterator[tuple[int, Any]]:
+    if _is_leaf_value(source) or isinstance(source, Mapping):
+        return
+    try:
+        length = len(source)
+    except TypeError:
+        return
+    for index in range(length):
+        try:
+            yield index, source[index]
+        except (IndexError, KeyError, TypeError):
+            continue
+
+
+def _join_path(prefix: str, part: str) -> str:
+    if part.startswith("["):
+        return f"{prefix}{part}"
+    if prefix:
+        return f"{prefix}.{part}"
+    return part
+
+
+def _prefix_path(prefix: str, path_value: str) -> str:
+    if path_value == "":
+        return prefix
+    if path_value.startswith("["):
+        return f"{prefix}{path_value}"
+    if prefix:
+        return f"{prefix}.{path_value}"
+    return path_value
+
+
+def _is_leaf_value(source: Any) -> bool:
+    return source is None or isinstance(
+        source,
+        (str, bytes, bytearray, bool, int, float, complex),
+    )
+
+
+def _is_match_leaf(source: Any) -> bool:
+    if _is_leaf_value(source):
+        return True
+    try:
+        next(_iter_child_values(source))
+    except StopIteration:
+        return True
+    return False
+
+
 def _parse_path_expression(expression: str) -> list[tuple[str, Union[str, int]]]:
     if expression == "":
         return []
@@ -2152,7 +2634,9 @@ __all__ = [
     "LogView",
     "Painter",
     "Panel",
+    "PathMatch",
     "Property",
+    "PropertyPattern",
     "PropertyGrid",
     "Rect",
     "RenderContext",
@@ -2171,7 +2655,9 @@ __all__ = [
     "display_width",
     "enable_emoji_support",
     "flush",
+    "iter_path_children",
     "iter_clusters",
+    "match_paths",
     "normalize_key",
     "path",
     "terminal_size",

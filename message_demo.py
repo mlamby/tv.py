@@ -173,13 +173,6 @@ class FieldNode:
 
 
 @dataclass
-class LeafField:
-    path: str
-    type_name: str
-    value: Any
-
-
-@dataclass
 class ReceivedMessage(Generic[PayloadT]):
     name: str
     schema: str
@@ -208,7 +201,7 @@ class ReceivedMessage(Generic[PayloadT]):
 
     @property
     def leaf_count(self) -> int:
-        return len(iter_leaf_fields(self.payload))
+        return len(tv.match_paths(self.payload))
 
     @property
     def branch_count(self) -> int:
@@ -272,16 +265,6 @@ class MessageWidgets:
     details: tv.PropertyGrid
 
 
-def optional_float(value: Any) -> Optional[float]:
-    return None if value is None else float(value)
-
-
-def optional_knots(value: Any) -> Optional[float]:
-    if value is None:
-        return None
-    return float(value) * KNOTS_PER_METER_PER_SECOND
-
-
 MESSAGE_ID = tv.path("header.message_id")
 SPEED_MS = tv.path("navigation.speed_ms", default=0.0, transform=float)
 SPEED_KNOTS = tv.path(
@@ -292,21 +275,6 @@ SPEED_KNOTS = tv.path(
 DETAIL_MESSAGE_ID = tv.path("payload.header.message_id", default="multiple")
 DETAIL_SOURCE = tv.path("payload.header.source", default="multiple")
 DETAIL_SCHEMA = tv.path("schema", default="multiple")
-DETAIL_HEALTH = tv.path(
-    "payload.status.overall_health",
-    default="mixed",
-    transform=health_name,
-)
-DETAIL_SPEED_MS = tv.path(
-    "payload.navigation.speed_ms",
-    default=None,
-    transform=optional_float,
-)
-DETAIL_SPEED_KNOTS = tv.path(
-    "payload.navigation.speed_ms",
-    default=None,
-    transform=optional_knots,
-)
 
 
 def make_navigation_message(sequence: int) -> NavigationPayload:
@@ -440,14 +408,14 @@ def create_widgets(state: MessageState) -> MessageWidgets:
     )
     tree.expanded_ids.update(
         {
-            "$.navigation",
-            "$.navigation.navigation",
-            "$.power",
-            "$.power.power",
-            "$.compute",
-            "$.compute.compute",
-            "$.sensors",
-            "$.sensors.sensors",
+            "navigation",
+            "navigation.navigation",
+            "power",
+            "power.power",
+            "compute",
+            "compute.compute",
+            "sensors",
+            "sensors.sensors",
         }
     )
 
@@ -474,25 +442,29 @@ def create_widgets(state: MessageState) -> MessageWidgets:
             tv.Property("Schema", DETAIL_SCHEMA),
             tv.Property("Received", "received_time"),
             tv.Property("Age", "age_seconds", align="right", formatter=format_age),
-            tv.Property(
-                "Health",
-                DETAIL_HEALTH,
-                style=health_style,
+            tv.PropertyPattern(
+                "payload.status.overall_health",
+                label="leaf",
+                formatter=lambda match: health_name(match.value),
+                style=lambda match: health_style(match.value),
             ),
-            tv.Property(
-                "Speed m/s",
-                DETAIL_SPEED_MS,
+            tv.PropertyPattern(
+                "payload.status.fault_count",
+                label="leaf",
                 align="right",
-                formatter=format_speed_ms,
             ),
-            tv.Property(
-                "Speed knots",
-                DETAIL_SPEED_KNOTS,
+            tv.PropertyPattern(
+                "payload.navigation.speed_ms",
+                label="leaf",
                 align="right",
-                formatter=format_knots,
+                formatter=lambda match: format_speed_ms(match.value),
             ),
-            tv.Property("Sequence", "sequence", align="right"),
-            tv.Property("Branches", "branch_count", align="right"),
+            tv.PropertyPattern(
+                "payload.navigation.position.*_deg",
+                label="leaf",
+                align="right",
+                formatter=lambda match: format_value(match.value),
+            ),
             tv.Property("Leaf fields", "leaf_count", align="right"),
         ],
     )
@@ -541,23 +513,23 @@ def run_main_loop(app: tv.App, state: MessageState, widgets: MessageWidgets) -> 
             app.sleep_until_next_frame()
 
 
-def leaves_for_selection(state: MessageState, tree: tv.TreeView) -> list[LeafField]:
+def leaves_for_selection(state: MessageState, tree: tv.TreeView) -> list[tv.PathMatch]:
     selected = tree.selected_node
     if selected is None:
         return [
-            leaf
+            match
             for message in state.messages
-            for leaf in iter_leaf_fields(message.payload, f"$.{message.name}")
+            for match in tv.match_paths(message.payload, prefix=message.name)
         ]
-    return iter_leaf_fields(selected.value, selected.path)
+    return tv.match_paths(selected.value, prefix=selected.path)
 
 
 def details_source(state: MessageState, tree: tv.TreeView) -> ReceivedMessage[Any]:
     selected = tree.selected_node
     if selected is not None:
         for message in state.messages:
-            if selected.path == f"$.{message.name}" or selected.path.startswith(
-                f"$.{message.name}."
+            if selected.path == message.name or selected.path.startswith(
+                f"{message.name}."
             ):
                 return message
     return min(state.messages, key=lambda message: message.age_seconds)
@@ -581,7 +553,7 @@ def build_message_roots(messages: Iterable[ReceivedMessage[Any]]) -> list[FieldN
     return [
         root
         for root in (
-            build_tree_node(f"$.{message.name}", message.name, message.payload)
+            build_tree_node(message.name, message.name, message.payload)
             for message in messages
         )
         if root is not None
@@ -589,73 +561,38 @@ def build_message_roots(messages: Iterable[ReceivedMessage[Any]]) -> list[FieldN
 
 
 def build_tree_roots(name: str, message: Any) -> list[FieldNode]:
-    root = build_tree_node(f"$.{name}", name, message)
+    root = build_tree_node(name, name, message)
     return [root] if root is not None else []
 
 
 def build_tree_node(path: str, name: str, value: Any) -> Optional[FieldNode]:
-    children: list[FieldNode] = []
-    if isinstance(value, ctypes.Structure):
-        fields = getattr(value, "_fields_", [])
-        for field in fields:
-            field_name = field[0]
-            child_value = getattr(value, field_name)
-            child_path = f"{path}.{field_name}" if path != "$" else f"$.{field_name}"
-            child = build_tree_node(child_path, field_name, child_value)
-            if child is not None:
-                children.append(child)
-        return FieldNode(
-            path,
-            name,
-            value.__class__.__name__,
-            len(fields),
-            value,
-            children,
-        )
-    if isinstance(value, ctypes.Array):
-        for index, child_value in enumerate(value):
-            child = build_tree_node(f"{path}[{index}]", f"[{index}]", child_value)
-            if child is not None:
-                children.append(child)
-        return FieldNode(path, name, "array", len(value), value, children)
-    if isinstance(value, Mapping):
-        for key, child_value in value.items():
-            child_path = f"{path}.{key}" if path != "$" else f"$.{key}"
-            child = build_tree_node(child_path, str(key), child_value)
-            if child is not None:
-                children.append(child)
-        return FieldNode(path, name, "object", len(value), value, children)
-    if isinstance(value, list):
-        for index, child_value in enumerate(value):
-            child = build_tree_node(f"{path}[{index}]", f"[{index}]", child_value)
-            if child is not None:
-                children.append(child)
-        return FieldNode(path, name, "array", len(value), value, children)
-    return None
+    child_matches = tv.iter_path_children(value, prefix=path)
+    if not child_matches:
+        return None
+    children = [
+        child
+        for match in child_matches
+        for child in [build_tree_node(match.path, match.name, match.value)]
+        if child is not None
+    ]
+    return FieldNode(
+        path,
+        name,
+        container_type_name(value),
+        len(child_matches),
+        value,
+        children,
+    )
 
 
-def iter_leaf_fields(value: Any, path: str = "$") -> list[LeafField]:
-    leaves: list[LeafField] = []
+def container_type_name(value: Any) -> str:
     if isinstance(value, ctypes.Structure):
-        for field in getattr(value, "_fields_", []):
-            field_name = field[0]
-            child_path = f"{path}.{field_name}" if path != "$" else f"$.{field_name}"
-            leaves.extend(iter_leaf_fields(getattr(value, field_name), child_path))
-        return leaves
-    if isinstance(value, ctypes.Array):
-        for index, child_value in enumerate(value):
-            leaves.extend(iter_leaf_fields(child_value, f"{path}[{index}]"))
-        return leaves
+        return value.__class__.__name__
+    if isinstance(value, (ctypes.Array, list, tuple)):
+        return "array"
     if isinstance(value, Mapping):
-        for key, child_value in value.items():
-            child_path = f"{path}.{key}" if path != "$" else f"$.{key}"
-            leaves.extend(iter_leaf_fields(child_value, child_path))
-        return leaves
-    if isinstance(value, list):
-        for index, child_value in enumerate(value):
-            leaves.extend(iter_leaf_fields(child_value, f"{path}[{index}]"))
-        return leaves
-    return [LeafField(path, type(value).__name__, value)]
+        return "object"
+    return type(value).__name__
 
 
 def count_nodes(nodes: list[FieldNode]) -> int:
@@ -673,12 +610,6 @@ def format_age(value: Any) -> str:
 
 
 def format_speed_ms(value: Any) -> str:
-    if value is None:
-        return "n/a"
-    return f"{float(value):.2f}"
-
-
-def format_knots(value: Any) -> str:
     if value is None:
         return "n/a"
     return f"{float(value):.2f}"
