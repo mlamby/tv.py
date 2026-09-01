@@ -144,7 +144,7 @@ def test_iter_path_children_returns_immediate_children() -> None:
         ("payload.status", "status", "ok")
     ]
     assert [(child.path, child.name, child.value) for child in history_children] == [
-        ("history[0]", "[0]", history[0])
+        ("history[0]", "history[0]", history[0])
     ]
 
 
@@ -198,9 +198,9 @@ def test_match_paths_direct_wildcard_expands_array_leaf_members() -> None:
         (match.path, match.name, match.type_name, match.value) for match in matches
     ] == [
         ("payload.status", "status", "int", 7),
-        ("payload.values[0]", "[0]", "int", 1),
-        ("payload.values[1]", "[1]", "int", 2),
-        ("payload.values[2]", "[2]", "int", 3),
+        ("payload.values[0]", "values[0]", "int", 1),
+        ("payload.values[1]", "values[1]", "int", 2),
+        ("payload.values[2]", "values[2]", "int", 3),
     ]
 
 
@@ -224,6 +224,15 @@ def test_match_paths_can_prefix_returned_paths() -> None:
     ]
     assert [(match.path, match.name, match.value) for match in root_match] == [
         ("status", "", "online")
+    ]
+
+
+def test_root_sequence_path_match_names_remain_index_only() -> None:
+    matches = tv.match_paths([10, 20])
+
+    assert [(match.path, match.name, match.value) for match in matches] == [
+        ("[0]", "[0]", 10),
+        ("[1]", "[1]", 20),
     ]
 
 
@@ -320,11 +329,9 @@ def test_message_demo_sensor_quality_includes_integer_array_leaves() -> None:
         "sensors.sensors[0].quality.recent_fault_codes[1]",
         "sensors.sensors[0].quality.recent_fault_codes[2]",
     ]
-    assert [match.value for match in matches if "recent_fault_codes" in match.path] == [
-        101,
-        0,
-        quality.dropouts,
-    ]
+    assert [
+        match.value for match in matches if "recent_fault_codes" in match.path
+    ] == [101, 0, quality.dropouts]
 
 
 def test_message_demo_field_node_names_include_array_field_name() -> None:
@@ -339,9 +346,12 @@ def test_message_demo_field_node_names_include_array_field_name() -> None:
     sensors_node = next(node for node in roots[0].children if node.name == "sensors")
 
     assert [node.name for node in sensors_node.children] == ["sensors[0]", "sensors[1]"]
-    assert message_demo.field_node_name("quality.recent_fault_codes[0]", "[0]") == (
-        "recent_fault_codes[0]"
+    quality_node = next(
+        node for node in sensors_node.children[0].children if node.name == "quality"
     )
+    assert [
+        node.name for node in quality_node.children if node.name.startswith("recent")
+    ] == ["recent_fault_codes"]
 
 
 def test_match_paths_supports_ctypes_structures_and_arrays() -> None:
@@ -479,6 +489,42 @@ def test_property_grid_expands_recursive_and_sequence_patterns() -> None:
     assert buffer.line_text(1).startswith("[1].health.state")
     assert buffer.line_text(1).rstrip().endswith("error")
     assert buffer.line_text(2).rstrip() == "subsystem.nested.db_status warning"
+
+
+def test_property_pattern_can_render_only_leaf_matches() -> None:
+    source = {
+        "payload": {
+            "health": {
+                "api_status": "ok",
+                "fault_count": 0,
+            }
+        }
+    }
+    grid = tv.PropertyGrid(
+        source,
+        [tv.PropertyPattern("payload.health.**", leaves_only=True)],
+    )
+    buffer = tv.ScreenBuffer(40, 3)
+
+    grid.render(tv.Painter(buffer), tv.RenderContext(40, 3))
+
+    assert buffer.line_text(0).rstrip() == "api_status  ok"
+    assert buffer.line_text(1).rstrip() == "fault_count 0"
+    assert buffer.line_text(2).rstrip() == ""
+
+
+def test_property_pattern_leaf_only_expands_direct_array_leaf_members() -> None:
+    source = {"payload": {"samples": [10, 20]}}
+    grid = tv.PropertyGrid(
+        source,
+        [tv.PropertyPattern("payload.*", leaves_only=True)],
+    )
+    buffer = tv.ScreenBuffer(32, 2)
+
+    grid.render(tv.Painter(buffer), tv.RenderContext(32, 2))
+
+    assert buffer.line_text(0).rstrip() == "samples[0] 10"
+    assert buffer.line_text(1).rstrip() == "samples[1] 20"
 
 
 def test_property_grid_pattern_labels_full_leaf_and_empty_matches() -> None:

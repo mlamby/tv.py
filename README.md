@@ -168,6 +168,7 @@ details = PropertyGrid(
         PropertyPattern(
             "payload.health.*_status",
             label="leaf",
+            leaves_only=True,
             style=lambda match: str(match.value),
         ),
         PropertyPattern("payload.sensors[*].health.state"),
@@ -180,6 +181,8 @@ details = PropertyGrid(
 `**` as a full path segment matches across nested dictionaries, objects, and
 sequences. `[*]` expands list or tuple indexes. Pattern rows are sorted by
 resolved path by default and render no rows when nothing matches.
+Set `leaves_only=True` on `PropertyPattern` to omit matched containers from
+generated property rows.
 When a matched field is an array or sequence of leaf values, leaf-only matching
 returns the indexed members, such as `samples[0]`.
 Python `Enum` instances are treated as leaf values, so a glob such as
@@ -202,6 +205,8 @@ leaves = DataTable(
 `Property` style callables receive the raw value before formatting.
 `PropertyPattern` style and formatter callables receive a `PathMatch`, so they
 can use `match.path`, `match.name`, `match.type_name`, and `match.value`.
+For indexed field values, `match.name` includes the field and index, such as
+`samples[0]`; root-level sequence indexes remain names like `[0]`.
 Pass `prefix=...` to mount returned paths under a display path.
 Use `iter_path_children()` when an application needs immediate child fields,
 for example to build a tree view model with the same traversal rules.
