@@ -624,13 +624,7 @@ def build_tree_node(path: str, name: str, value: Any) -> Optional[FieldNode]:
     children = [
         child
         for match in child_matches
-        for child in [
-            build_tree_node(
-                match.path,
-                field_node_name(match.path, match.name),
-                match.value,
-            )
-        ]
+        for child in [build_tree_node(match.path, match.name, match.value)]
         if child is not None
     ]
     return FieldNode(
@@ -641,13 +635,6 @@ def build_tree_node(path: str, name: str, value: Any) -> Optional[FieldNode]:
         value,
         children,
     )
-
-
-def field_node_name(path: str, name: str) -> str:
-    if not name.startswith("["):
-        return name
-    dot = path.rfind(".")
-    return path[dot + 1 :] if dot != -1 else path
 
 
 def container_type_name(value: Any) -> str:

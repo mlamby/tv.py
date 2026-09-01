@@ -1046,6 +1046,7 @@ class PropertyPattern:
             style name.
         sort: When true, generated rows are sorted by resolved path for stable
             rendering.
+        leaves_only: When true, only terminal values are rendered.
     """
 
     pattern: str
@@ -1054,6 +1055,7 @@ class PropertyPattern:
     formatter: Optional[PropertyPatternFormatter] = None
     style: PropertyPatternStyle = "normal"
     sort: bool = True
+    leaves_only: bool = False
 
 
 @dataclass
@@ -2002,7 +2004,9 @@ class PathMatch:
     Attributes:
         path: Resolved dotted path without a root marker.
         value: Matched value.
-        name: Final field name or index label.
+        name: Final field name, including an index suffix for indexed field
+            values such as ``samples[0]``. Root-level indexes remain labels
+            such as ``[0]``.
         type_name: Python type name for ``value``.
     """
 
@@ -2016,12 +2020,7 @@ def iter_path_children(source: Any, *, prefix: str = "") -> list[PathMatch]:
     """Return immediate children of ``source`` using path traversal semantics."""
 
     return [
-        PathMatch(
-            _prefix_path(prefix, name),
-            value,
-            name,
-            type(value).__name__,
-        )
+        _path_match("", _prefix_path(prefix, name), value)
         for name, value in _iter_child_values(source)
     ]
 
@@ -2030,7 +2029,7 @@ def _expand_property_pattern(source: Any, prop: PropertyPattern) -> list[_Proper
     matches = match_paths(
         source,
         prop.pattern,
-        leaves_only=False,
+        leaves_only=prop.leaves_only,
         sort=prop.sort,
     )
     prefix = _literal_prefix(_parse_path_pattern(prop.pattern))
@@ -2097,11 +2096,12 @@ def match_paths(
         if _is_match_leaf(raw.value):
             matches.append(_path_match(prefix, raw.path, raw.value))
             continue
-        for item_index, item_value in _iter_index_values(raw.value):
-            if _is_match_leaf(item_value):
-                matches.append(
-                    _path_match(prefix, f"{raw.path}[{item_index}]", item_value)
-                )
+        if raw.path:
+            for item_index, item_value in _iter_index_values(raw.value):
+                if _is_match_leaf(item_value):
+                    matches.append(
+                        _path_match(prefix, f"{raw.path}[{item_index}]", item_value)
+                    )
     if sort:
         matches.sort(key=lambda match: match.path)
     return matches
@@ -2126,6 +2126,11 @@ def _path_leaf(path_value: str) -> str:
     if path_value.endswith("]"):
         bracket = path_value.rfind("[")
         if bracket != -1:
+            dot = path_value.rfind(".", 0, bracket)
+            if dot != -1:
+                return path_value[dot + 1 :]
+            if bracket > 0:
+                return path_value
             return path_value[bracket:]
     dot = path_value.rfind(".")
     if dot != -1:

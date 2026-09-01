@@ -192,6 +192,7 @@ details = PropertyGrid(
         PropertyPattern(
             "payload.health.*_status",
             label="leaf",
+            leaves_only=True,
             style=lambda match: str(match.value),
         ),
     ],
@@ -218,7 +219,8 @@ PropertyPattern("payload.sensors[*].health.state")
 ```
 
 Generated rows are sorted by resolved path by default. Set `sort=False` to keep
-source traversal order. Empty matches render no rows.
+source traversal order. Set `leaves_only=True` to render only terminal values
+and omit matched containers. Empty matches render no rows.
 
 `PropertyPattern.label` controls generated labels:
 
@@ -241,8 +243,10 @@ leaves = DataTable(
 ```
 
 `match_paths()` returns `PathMatch` objects with `path`, `name`, `type_name`,
-and `value` attributes. It returns leaf values by default; pass
-`leaves_only=False` to include matched containers and intermediate objects.
+and `value` attributes. For indexed field values, `name` includes the field and
+index, such as `samples[0]`; root-level sequence indexes remain names like
+`[0]`. It returns leaf values by default; pass `leaves_only=False` to include
+matched containers and intermediate objects.
 Pass `prefix=...` to mount returned paths under a display path.
 When a matched field is an array or sequence of leaf values, leaf-only matching
 returns the indexed members, such as `samples[0]`, so `pattern="*"` can show
