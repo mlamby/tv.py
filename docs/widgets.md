@@ -244,6 +244,9 @@ leaves = DataTable(
 and `value` attributes. It returns leaf values by default; pass
 `leaves_only=False` to include matched containers and intermediate objects.
 Pass `prefix=...` to mount returned paths under a display path.
+When a matched field is an array or sequence of leaf values, leaf-only matching
+returns the indexed members, such as `samples[0]`, so `pattern="*"` can show
+the direct leaf values of a selected structure.
 Python `Enum` instances are treated as leaf values, so status enums match
 field-name globs such as `*_status` without expanding into `.name` and
 `.value`. Formatter and style callbacks still receive the enum object as

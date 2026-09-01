@@ -2089,19 +2089,31 @@ def match_paths(
     """
 
     raw_matches = _match_path_pattern(source, pattern)
-    matches = [
-        PathMatch(
-            _prefix_path(prefix, raw.path),
-            raw.value,
-            _path_leaf(raw.path),
-            type(raw.value).__name__,
-        )
-        for raw in raw_matches
-        if not leaves_only or _is_match_leaf(raw.value)
-    ]
+    matches: list[PathMatch] = []
+    for raw in raw_matches:
+        if not leaves_only:
+            matches.append(_path_match(prefix, raw.path, raw.value))
+            continue
+        if _is_match_leaf(raw.value):
+            matches.append(_path_match(prefix, raw.path, raw.value))
+            continue
+        for item_index, item_value in _iter_index_values(raw.value):
+            if _is_match_leaf(item_value):
+                matches.append(
+                    _path_match(prefix, f"{raw.path}[{item_index}]", item_value)
+                )
     if sort:
         matches.sort(key=lambda match: match.path)
     return matches
+
+
+def _path_match(prefix: str, path_value: str, value: Any) -> PathMatch:
+    return PathMatch(
+        _prefix_path(prefix, path_value),
+        value,
+        _path_leaf(path_value),
+        type(value).__name__,
+    )
 
 
 @dataclass(frozen=True)

@@ -181,6 +181,37 @@ def test_match_paths_can_preserve_source_order_and_match_exact_indexes() -> None
     ]
 
 
+def test_match_paths_direct_wildcard_expands_array_leaf_members() -> None:
+    IntArray = ctypes.c_int * 3
+
+    class Payload(ctypes.Structure):
+        _fields_ = [
+            ("values", IntArray),
+            ("status", ctypes.c_int),
+        ]
+
+    source = Payload(IntArray(1, 2, 3), 7)
+
+    matches = tv.match_paths(source, "*", prefix="payload")
+
+    assert [
+        (match.path, match.name, match.type_name, match.value) for match in matches
+    ] == [
+        ("payload.status", "status", "int", 7),
+        ("payload.values[0]", "[0]", "int", 1),
+        ("payload.values[1]", "[1]", "int", 2),
+        ("payload.values[2]", "[2]", "int", 3),
+    ]
+
+
+def test_match_paths_direct_wildcard_does_not_expand_array_containers() -> None:
+    source = {"sensors": [{"state": "ok"}, {"state": "warning"}]}
+
+    matches = tv.match_paths(source, "*", prefix="payload")
+
+    assert matches == []
+
+
 def test_match_paths_can_prefix_returned_paths() -> None:
     source = [{"state": "ok"}, {"state": "warning"}]
 
@@ -267,6 +298,32 @@ def test_message_demo_health_fields_are_python_enums() -> None:
             "Health",
             message_demo.Health.OK,
         )
+    ]
+
+
+def test_message_demo_sensor_quality_includes_integer_array_leaves() -> None:
+    import message_demo
+
+    state = message_demo.create_state()
+    quality = state.messages.sensors.payload.sensors[0].quality
+
+    matches = tv.match_paths(
+        quality,
+        "*",
+        prefix="sensors.sensors[0].quality",
+    )
+
+    assert [
+        match.path for match in matches if "recent_fault_codes" in match.path
+    ] == [
+        "sensors.sensors[0].quality.recent_fault_codes[0]",
+        "sensors.sensors[0].quality.recent_fault_codes[1]",
+        "sensors.sensors[0].quality.recent_fault_codes[2]",
+    ]
+    assert [match.value for match in matches if "recent_fault_codes" in match.path] == [
+        101,
+        0,
+        quality.dropouts,
     ]
 
 

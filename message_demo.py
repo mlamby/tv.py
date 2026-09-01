@@ -139,6 +139,7 @@ class SensorQuality(ctypes.Structure):
         ("jitter_ms", ctypes.c_float),
         ("satellites", ctypes.c_uint16),
         ("hdop", ctypes.c_float),
+        ("recent_fault_codes", ctypes.c_uint16 * 3),
     ]
 
 
@@ -363,7 +364,13 @@ def make_sensor_message(sequence: int) -> SensorPayload:
                 "imu",
                 True,
                 200,
-                SensorQuality(imu_dropouts, round(random.uniform(0.2, 1.5), 2), 0, 0),
+                SensorQuality(
+                    imu_dropouts,
+                    round(random.uniform(0.2, 1.5), 2),
+                    0,
+                    0,
+                    (ctypes.c_uint16 * 3)(101, 0, imu_dropouts),
+                ),
             ),
             SensorReading(
                 "gps",
@@ -374,6 +381,7 @@ def make_sensor_message(sequence: int) -> SensorPayload:
                     0,
                     random.randint(10, 15),
                     round(random.uniform(0.7, 1.6), 2),
+                    (ctypes.c_uint16 * 3)(0, 0, 0 if gps_online else 204),
                 ),
             ),
         ),
@@ -579,7 +587,7 @@ def leaves_for_selection(state: MessageState, tree: tv.TreeView) -> list[tv.Path
             for message in state.messages
             for match in tv.match_paths(message.payload, prefix=message.name)
         ]
-    return tv.match_paths(selected.value, prefix=selected.path)
+    return tv.match_paths(selected.value, pattern='*', prefix=selected.path)
 
 
 def details_source(state: MessageState, tree: tv.TreeView) -> ReceivedMessage[Any]:
