@@ -327,6 +327,23 @@ def test_message_demo_sensor_quality_includes_integer_array_leaves() -> None:
     ]
 
 
+def test_message_demo_field_node_names_include_array_field_name() -> None:
+    import message_demo
+
+    state = message_demo.create_state()
+    roots = message_demo.build_tree_roots(
+        "sensors",
+        state.messages.sensors.payload,
+    )
+
+    sensors_node = next(node for node in roots[0].children if node.name == "sensors")
+
+    assert [node.name for node in sensors_node.children] == ["sensors[0]", "sensors[1]"]
+    assert message_demo.field_node_name("quality.recent_fault_codes[0]", "[0]") == (
+        "recent_fault_codes[0]"
+    )
+
+
 def test_match_paths_supports_ctypes_structures_and_arrays() -> None:
     class Status(ctypes.Structure):
         _fields_ = [
