@@ -180,6 +180,8 @@ details = PropertyGrid(
 `**` as a full path segment matches across nested dictionaries, objects, and
 sequences. `[*]` expands list or tuple indexes. Pattern rows are sorted by
 resolved path by default and render no rows when nothing matches.
+When a matched field is an array or sequence of leaf values, leaf-only matching
+returns the indexed members, such as `samples[0]`.
 Python `Enum` instances are treated as leaf values, so a glob such as
 `*_status` matches the enum field itself rather than expanding into `.name` and
 `.value`.
