@@ -229,24 +229,27 @@ and omit matched containers. Empty matches render no rows.
 - `"full"`: show the full resolved path.
 - `"leaf"`: show only the final field or index.
 
-Use `match_paths()` when the same traversal should feed another widget:
+Use `path_rows()` when the same traversal should feed a `DataTable`:
 
 ```python
 leaves = DataTable(
     columns=[
-        Column("Path", "path"),
+        Column("Field", "label"),
         Column("Type", "type_name"),
         Column("Value", "value"),
     ],
-    rows=lambda: match_paths(payload, prefix="navigation"),
+    rows=lambda: path_rows(payload, prefix="navigation", label="relative"),
 )
 ```
 
-`match_paths()` returns `PathMatch` objects with `path`, `name`, `type_name`,
-and `value` attributes. For indexed field values, `name` includes the field and
+`path_rows()` returns `PathMatch` objects with `label`, `path`, `name`,
+`type_name`, and `value` attributes. `label` supports the same modes as
+`PropertyPattern.label`: `"relative"`, `"full"`, and `"leaf"`.
+Use `match_paths()` when an application needs raw traversal results without
+table label selection. For indexed field values, `name` includes the field and
 index, such as `samples[0]`; root-level sequence indexes remain names like
-`[0]`. It returns leaf values by default; pass `leaves_only=False` to include
-matched containers and intermediate objects.
+`[0]`. Path traversal returns leaf values by default; pass `leaves_only=False`
+to include matched containers and intermediate objects.
 Pass `prefix=...` to mount returned paths under a display path.
 When a matched field is an array or sequence of leaf values, leaf-only matching
 returns the indexed members, such as `samples[0]`, so `pattern="*"` can show

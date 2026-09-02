@@ -35,6 +35,7 @@ def test_public_api_is_exported_for_copyable_framework_use() -> None:
         "iter_path_children",
         "match_paths",
         "path",
+        "path_rows",
     ]:
         assert namespace[name] is getattr(tv, name)
 
@@ -83,6 +84,17 @@ def test_path_accessor_uses_default_and_transform() -> None:
     assert tv.path("missing.field", default="unknown")(source) == "unknown"
     assert tv.path("navigation.speed_ms[0]", default="bad")(source) == "bad"
     assert tv.path("status.health", default="unknown")(source) == ""
+
+
+def test_path_accessor_does_not_transform_unresolved_default() -> None:
+    source = {"navigation": {}}
+    speed = tv.path(
+        "navigation.speed_ms",
+        default="unknown",
+        transform=lambda value: float(value) * 1.943844,
+    )
+
+    assert speed(source) == "unknown"
 
 
 def test_match_paths_returns_leaf_matches_by_default() -> None:
@@ -225,6 +237,56 @@ def test_match_paths_can_prefix_returned_paths() -> None:
     assert [(match.path, match.name, match.value) for match in root_match] == [
         ("status", "", "online")
     ]
+
+
+def test_path_rows_adds_table_labels_matching_property_pattern_modes() -> None:
+    source = {
+        "payload": {
+            "health": {
+                "api_status": "ok",
+                "db_status": "warning",
+            }
+        }
+    }
+
+    relative = tv.path_rows(source, "payload.health.*_status")
+    full = tv.path_rows(source, "payload.health.*_status", label="full")
+    leaf = tv.path_rows(source, "payload.health.*_status", label="leaf")
+
+    assert [row.label for row in relative] == ["api_status", "db_status"]
+    assert [row.label for row in full] == [
+        "payload.health.api_status",
+        "payload.health.db_status",
+    ]
+    assert [row.label for row in leaf] == ["api_status", "db_status"]
+    assert [(row.path, row.name, row.type_name, row.value) for row in leaf] == [
+        ("payload.health.api_status", "api_status", "str", "ok"),
+        ("payload.health.db_status", "db_status", "str", "warning"),
+    ]
+
+
+def test_path_rows_relative_labels_include_prefix_mount() -> None:
+    source = {"health": {"api_status": "ok"}, "samples": [10, 20]}
+
+    status_rows = tv.path_rows(
+        source,
+        "health.*_status",
+        prefix="message.payload",
+    )
+    sample_rows = tv.path_rows(source, "samples[*]", prefix="message.payload")
+
+    assert [(row.path, row.label) for row in status_rows] == [
+        ("message.payload.health.api_status", "api_status")
+    ]
+    assert [(row.path, row.label) for row in sample_rows] == [
+        ("message.payload.samples[0]", "[0]"),
+        ("message.payload.samples[1]", "[1]"),
+    ]
+
+
+def test_path_rows_rejects_unknown_label_modes() -> None:
+    with pytest.raises(ValueError, match="Invalid path row label mode"):
+        tv.path_rows({"health": "ok"}, label="short")
 
 
 def test_root_sequence_path_match_names_remain_index_only() -> None:
@@ -1054,6 +1116,17 @@ def test_data_table_resolves_callable_rows_for_render_and_selection() -> None:
     assert "beta" in buffer.line_text(1)
     assert "gamma" in buffer.line_text(2)
     assert table.selected_item == rows[1]
+
+
+def test_data_table_selected_item_clamps_when_rows_shrink_before_render() -> None:
+    rows = [{"name": "alpha"}, {"name": "beta"}]
+    table = tv.DataTable([tv.Column("Name", "name")], lambda: rows)
+    table.handle_key("end")
+
+    rows[:] = [{"name": "alpha"}]
+
+    assert table.selected_item == rows[0]
+    assert table.selected_index == 0
 
 
 def test_property_grid_static_and_callable_styles_use_raw_values() -> None:

@@ -131,7 +131,7 @@ tree = TreeView(
 )
 
 table = DataTable(
-    columns=[Column("Path", "path"), Column("Value", "value")],
+    columns=[Column("Field", "label"), Column("Value", "value")],
     rows=lambda: leaf_fields_under(tree.selected_node),
 )
 
@@ -189,19 +189,28 @@ Python `Enum` instances are treated as leaf values, so a glob such as
 `*_status` matches the enum field itself rather than expanding into `.name` and
 `.value`.
 
-Use `match_paths()` when the same traversal should feed another widget:
+Use `path_rows()` when the same traversal should feed a `DataTable`:
 
 ```python
 leaves = DataTable(
     columns=[
-        Column("Path", "path"),
+        Column("Field", "label"),
         Column("Type", "type_name"),
         Column("Value", "value"),
     ],
-    rows=lambda: match_paths(latest_message["payload"], prefix="latest"),
+    rows=lambda: path_rows(
+        latest_message["payload"],
+        prefix="latest",
+        label="relative",
+    ),
 )
 ```
 
+`path_rows()` returns `PathMatch` objects with `label`, `path`, `name`,
+`type_name`, and `value` attributes. `label` supports the same modes as
+`PropertyPattern.label`: `"relative"`, `"full"`, and `"leaf"`.
+Use `match_paths()` when an application needs raw traversal results without
+table label selection.
 `Property` style callables receive the raw value before formatting.
 `PropertyPattern` style and formatter callables receive a `PathMatch`, so they
 can use `match.path`, `match.name`, `match.type_name`, and `match.value`.
