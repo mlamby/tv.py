@@ -487,7 +487,7 @@ def create_widgets(state: MessageState) -> MessageWidgets:
 
     leaves = tv.DataTable(
         columns=[
-            tv.Column("Path", "path", tv.Size.flex(3)),
+            tv.Column("Field", "label", tv.Size.flex(3)),
             tv.Column("Type", "type_name", tv.Size.fixed(9)),
             tv.Column(
                 "Value",
@@ -585,9 +585,9 @@ def leaves_for_selection(state: MessageState, tree: tv.TreeView) -> list[tv.Path
         return [
             match
             for message in state.messages
-            for match in tv.match_paths(message.payload, prefix=message.name)
+            for match in tv.path_rows(message.payload, prefix=message.name)
         ]
-    return tv.match_paths(selected.value, pattern='*', prefix=selected.path)
+    return tv.path_rows(selected.value, pattern="*", prefix=selected.path)
 
 
 def details_source(state: MessageState, tree: tv.TreeView) -> ReceivedMessage[Any]:

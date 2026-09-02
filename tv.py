@@ -973,26 +973,28 @@ class PathAccessor:
         self._parts = _parse_path_expression(expression)
 
     def __call__(self, source: Any) -> Any:
-        value = self._resolve(source)
+        value, resolved = self._resolve(source)
+        if not resolved:
+            return value
         if self.transform:
             return self.transform(value)
         return value
 
-    def _resolve(self, source: Any) -> Any:
+    def _resolve(self, source: Any) -> tuple[Any, bool]:
         value = source
         for kind, part in self._parts:
             if value is None:
-                return self.default
+                return self.default, False
             if kind == "field":
                 value = _get_value(value, cast(str, part), _MISSING)
                 if value is _MISSING:
-                    return self.default
+                    return self.default, False
                 continue
             try:
                 value = value[cast(int, part)]
             except (IndexError, KeyError, TypeError):
-                return self.default
-        return value
+                return self.default, False
+        return value, True
 
 
 def path(
@@ -1253,6 +1255,9 @@ class DataTable(Widget):
         if self.selected_index is None:
             return None
         rows = self._rows()
+        self._clamp_selection(rows)
+        if self.selected_index is None:
+            return None
         if 0 <= self.selected_index < len(rows):
             return rows[self.selected_index]
         return None
@@ -2008,12 +2013,16 @@ class PathMatch:
             values such as ``samples[0]``. Root-level indexes remain labels
             such as ``[0]``.
         type_name: Python type name for ``value``.
+        label: Presentation label for table rows. Plain traversal results use
+            ``name``; :func:`path_rows` can compute ``"relative"``, ``"full"``,
+            or ``"leaf"`` labels.
     """
 
     path: str
     value: Any
     name: str
     type_name: str
+    label: str = ""
 
 
 def iter_path_children(source: Any, *, prefix: str = "") -> list[PathMatch]:
@@ -2053,6 +2062,44 @@ def _expand_property_pattern(source: Any, prop: PropertyPattern) -> list[_Proper
             )
         )
     return rows
+
+
+def path_rows(
+    source: Any,
+    pattern: str = "**",
+    *,
+    label: str = "relative",
+    leaves_only: bool = True,
+    sort: bool = True,
+    prefix: str = "",
+) -> list[PathMatch]:
+    """Return table-friendly path matches with a presentation label.
+
+    ``label`` supports the same modes as :class:`PropertyPattern`: ``"relative"``,
+    ``"full"``, or ``"leaf"``. The returned objects are :class:`PathMatch`
+    instances and can be used directly as :class:`DataTable` rows.
+    """
+
+    if label not in {"relative", "full", "leaf"}:
+        raise ValueError(f"Invalid path row label mode: {label!r}")
+    matches = match_paths(
+        source,
+        pattern,
+        leaves_only=leaves_only,
+        sort=sort,
+        prefix=prefix,
+    )
+    label_prefix = _prefix_path(prefix, _literal_prefix(_parse_path_pattern(pattern)))
+    return [
+        PathMatch(
+            match.path,
+            match.value,
+            match.name,
+            match.type_name,
+            _property_pattern_label(match, label, label_prefix),
+        )
+        for match in matches
+    ]
 
 
 def _property_pattern_label(match: PathMatch, mode: str, prefix: str) -> str:
@@ -2108,11 +2155,13 @@ def match_paths(
 
 
 def _path_match(prefix: str, path_value: str, value: Any) -> PathMatch:
+    name = _path_leaf(path_value)
     return PathMatch(
         _prefix_path(prefix, path_value),
         value,
-        _path_leaf(path_value),
+        name,
         type(value).__name__,
+        name,
     )
 
 
@@ -2898,5 +2947,6 @@ __all__ = [
     "match_paths",
     "normalize_key",
     "path",
+    "path_rows",
     "terminal_size",
 ]
